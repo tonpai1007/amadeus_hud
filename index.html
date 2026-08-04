@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AMADEUS Convergence Sync HUD</title>
+  <!-- Google Fonts for futuristic monospace and modern HUD headers -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <!-- Load PixiJS & Live2D SDK dependencies -->
+  <script src="lib/pixi.min.js"></script>
+  <script src="lib/live2d.min.js"></script>
+  <script src="live2d/live2dcubismcore.min.js"></script>
+  <script src="lib/pixi-live2d-display.min.js"></script>
+  <script src="live2d_controller.js"></script>
+</head>
+<body>
+  <!-- HTML Canvas for 2D Audio Visualizer Ring (with cursor gravitational lensing) -->
+  <canvas id="audio-canvas"></canvas>
+  
+  <!-- Live2D Makise Kurisu Canvas -->
+  <canvas id="live2d-canvas"></canvas>
+
+  <!-- Futuristic Scanline & Digital Grid Overlay -->
+  <div class="crt-overlay"></div>
+  <div class="grid-overlay"></div>
+  <!-- World Line Shift FX Overlay -->
+  <div class="glitch-overlay" id="glitch-overlay"></div>
+
+  <!-- HUD Interface Wrapper -->
+  <div id="hud-container">
+    
+    <!-- TOP LEFT: Clock & System State -->
+    <header class="hud-panel top-left-panel">
+      <div class="panel-header">
+        <span class="panel-tag">// COGNITIVE_TEMPORAL_RES</span>
+        <span class="status-indicator online">SYSTEM_COHERENT</span>
+      </div>
+      <div class="panel-body">
+        <div id="hud-clock">00:00:00</div>
+        <div id="hud-date">YYYY.MM.DD</div>
+        <div class="system-alerts">
+          <span class="alert-item"><span class="bullet"></span> KERNEL: ACTIVE_SYNC</span>
+          <span class="alert-item"><span class="bullet"></span> TIMELINE: TARGET_ATTRACTOR</span>
+        </div>
+        <div class="now-playing" id="now-playing">
+          <span class="np-label">// NOW_PLAYING</span>
+          <span class="np-track" id="now-playing-track">AUDIO_FEED_IDLE</span>
+          <span class="np-artist" id="now-playing-artist"></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- TOP RIGHT: Divergence Meter + World Line Interference Map -->
+    <section class="hud-panel top-right-panel" style="width: 380px;">
+      <div class="panel-header">
+        <span class="panel-tag">// DIVERGENCE_METER</span>
+        <span class="status-indicator online">WORLD_LINE</span>
+      </div>
+      <div id="divergence-meter" class="divergence-meter">
+        <span class="nixie-digit">0</span>
+        <span class="nixie-dot">.</span>
+        <span class="nixie-digit">9</span>
+        <span class="nixie-digit">8</span>
+        <span class="nixie-digit">6</span>
+        <span class="nixie-digit">2</span>
+        <span class="nixie-digit">5</span>
+        <span class="nixie-digit">4</span>
+      </div>
+      <div class="field-label">World Line Convergence Attractor</div>
+      <div class="world-line-monitor">
+        <div class="panel-header">
+          <span class="panel-tag">// WORLD_LINE_INTERFERENCE</span>
+          <span class="pulse-text">MAP_ACTIVE</span>
+        </div>
+        <div class="world-line-frame">
+          <canvas id="world-line-canvas"></canvas>
+        </div>
+        <div class="world-line-meta">
+          <span id="wl-delta">DELTA +0.0000</span>
+          <span id="wl-attractor">ATTRACTOR 0.986254</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- CENTER OVERLAY: Sync State -->
+    <div class="center-banner">
+      <div class="sync-status">
+        <div class="pulse-circle"></div>
+        <span>AMADEUS COGNITIVE SYNC LOGIC v2.8</span>
+      </div>
+    </div>
+
+    <!-- BOTTOM LEFT: Live News Feed -->
+    <section class="hud-panel bottom-left-panel" style="width: 500px; height: 260px; display: flex; flex-direction: column;">
+      <div class="panel-header">
+        <span class="panel-tag">// REALTIME_NEWS_FEED</span>
+        <span class="pulse-text" id="news-status">LIVE_SYNC</span>
+      </div>
+      <div class="panel-body" style="flex-grow: 1; overflow: hidden;">
+        <div class="news-container" id="news-feed">
+          <div class="news-loading">> Fetching global intelligence feed...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- BOTTOM RIGHT: Telemetry Dashboard -->
+    <section class="hud-panel bottom-right-panel">
+      <div class="panel-header">
+        <span class="panel-tag">// SYSTEM_RESOURCE_STATS</span>
+      </div>
+      <div class="panel-body">
+        <div class="telemetry-grid">
+          <!-- CPU -->
+          <div class="telemetry-item">
+            <div class="tel-label">
+              <span>CPU</span>
+              <span id="cpu-value">--%</span>
+            </div>
+            <div class="tel-bar-bg">
+              <div class="tel-bar-fill bar-cyan" id="cpu-bar" style="width: 0%"></div>
+            </div>
+            <div class="tel-name" id="cpu-name">Detecting Processor...</div>
+          </div>
+
+          <!-- GPU -->
+          <div class="telemetry-item">
+            <div class="tel-label">
+              <span>GPU</span>
+              <span id="gpu-value">--%</span>
+            </div>
+            <div class="tel-bar-bg">
+              <div class="tel-bar-fill bar-pink" id="gpu-bar" style="width: 0%"></div>
+            </div>
+            <div class="tel-name" id="gpu-name">Detecting Graphics...</div>
+          </div>
+
+          <!-- RAM -->
+          <div class="telemetry-item">
+            <div class="tel-label">
+              <span>RAM</span>
+              <span id="ram-value">-- / -- MB</span>
+            </div>
+            <div class="tel-bar-bg">
+              <div class="tel-bar-fill bar-violet" id="ram-bar" style="width: 0%"></div>
+            </div>
+            <div class="tel-name">System Memory Allocation</div>
+          </div>
+
+          <!-- Network -->
+          <div class="telemetry-item">
+            <div class="tel-label">
+              <span>NET SYNC</span>
+              <span id="net-value">↓0.00 Mb/s ↑0.00 Mb/s</span>
+            </div>
+            <div class="net-flow-container">
+              <div class="net-direction">
+                <span class="dir-icon">▼</span> Down: <span id="net-down-mb">0.0</span> MB/s
+              </div>
+              <div class="net-direction">
+                <span class="dir-icon">▲</span> Up: <span id="net-up-mb">0.0</span> MB/s
+              </div>
+            </div>
+            <div class="tel-name" id="net-name">Active Interface</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="wallpaper.js"></script>
+</body>
+</html>

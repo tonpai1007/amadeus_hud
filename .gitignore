@@ -1,0 +1,16 @@
+# OS / editor noise
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+*.user
+*.suo
+
+# Backups / temp artifacts
+*.bak
+*.tmp
+*.orig
+*.old

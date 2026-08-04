@@ -1,0 +1,706 @@
+/* style.css - AMADEUS Convergence Sync HUD Theme */
+
+:root {
+  /* Color Palette - Crimson AMADEUS Convergence */
+  --bg-dark: #050102;
+  --primary-pink: #e60026;
+  --primary-pink-rgb: 230, 0, 38;
+  --accent-cyan: #ff4d6d;
+  --accent-cyan-rgb: 255, 77, 109;
+  --accent-violet: #ff9f1c;
+  --accent-violet-rgb: 255, 159, 28;
+  --nixie-amber: #ff5500;
+  --nixie-amber-rgb: 255, 85, 0;
+  --text-main: #f5f6f8;
+  --text-muted: #a49195;
+  
+  /* Font Family definitions */
+  --font-hud: 'Orbitron', sans-serif;
+  --font-mono: 'Share Tech Mono', monospace;
+  --font-body: 'Outfit', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+}
+
+body {
+  background: radial-gradient(circle at center, #1f0204 0%, #080001 75%, #000000 100%);
+  color: var(--text-main);
+  font-family: var(--font-body);
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  position: relative;
+  /* Time-of-day ambience fades smoothly instead of snapping */
+  transition: filter 2.5s ease;
+}
+
+/* Night ops: colder, dimmer HUD between 19:00 and 06:00 */
+body.night-mode {
+  filter: brightness(0.8) saturate(0.85) hue-rotate(10deg) contrast(1.03);
+}
+
+/* Background Canvas Layouts */
+#live2d-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2; /* character on top of visualizer and background grid */
+  pointer-events: auto; /* enable character clicking */
+}
+
+#audio-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* click through to desktop */
+  z-index: 1; /* visualizer ring drawn behind the Live2D model */
+}
+
+/* CRT Scanlines Overlay */
+.crt-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.25) 50%
+  ), linear-gradient(
+    90deg,
+    rgba(230, 0, 38, 0.04),
+    rgba(0, 255, 0, 0.01),
+    rgba(230, 0, 38, 0.03)
+  );
+  background-size: 100% 4px, 6px 100%;
+  z-index: 999;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+/* World Line Shift FX (triggered on click) */
+.glitch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  pointer-events: none;
+  opacity: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 0, 60, 0.05) 0 2px,
+    rgba(0, 200, 255, 0.04) 2px 4px,
+    transparent 4px 6px
+  );
+  mix-blend-mode: screen;
+}
+
+body.world-line-shifting #hud-container {
+  animation: worldline-jitter 0.42s steps(5, end);
+}
+
+@keyframes worldline-jitter {
+  0% { transform: translate(0, 0) skewX(0deg); }
+  15% { transform: translate(-5px, 2px) skewX(3deg); }
+  30% { transform: translate(4px, -2px) skewX(-2deg); }
+  45% { transform: translate(-3px, 1px) skewX(1deg); }
+  60% { transform: translate(3px, -1px) skewX(-3deg); }
+  80% { transform: translate(-2px, 0) skewX(2deg); }
+  100% { transform: translate(0, 0) skewX(0deg); }
+}
+
+body.world-line-shifting .glitch-overlay {
+  animation: glitch-flash 0.42s steps(3, end);
+}
+
+@keyframes glitch-flash {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  35% { opacity: 0.35; }
+  55% { opacity: 0.9; }
+  80% { opacity: 0.25; }
+  100% { opacity: 0; }
+}
+
+/* Cyberpunk Digital Grid Overlay */
+.grid-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: 
+    linear-gradient(rgba(230, 0, 38, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(230, 0, 38, 0.02) 1px, transparent 1px);
+  background-size: 50px 50px;
+  background-position: center;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* HUD Layout Elements */
+#hud-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  padding: 30px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto 1fr auto;
+  gap: 20px;
+  pointer-events: none; /* Let clicks pass to desktop if wallpaper */
+}
+
+/* HUD Panel Base - Glassmorphic */
+.hud-panel {
+  pointer-events: auto; /* Re-enable pointer events for panels to allow scrolling/hovering */
+  background: rgba(10, 10, 18, 0.75);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 
+    0 8px 32px 0 rgba(0, 0, 0, 0.5),
+    inset 0 0 12px rgba(0, 212, 255, 0.05);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.hud-panel:hover {
+  border-color: rgba(0, 212, 255, 0.35);
+  box-shadow: 
+    0 8px 32px 0 rgba(0, 0, 0, 0.6),
+    inset 0 0 20px rgba(0, 212, 255, 0.1);
+}
+
+/* Panel Header */
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px dashed rgba(138, 159, 196, 0.2);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.panel-tag {
+  font-family: var(--font-hud);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 2px;
+}
+
+/* Status Lights */
+.status-indicator {
+  font-family: var(--font-hud);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-indicator::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent-cyan);
+  box-shadow: 0 0 8px var(--accent-cyan);
+}
+
+.status-indicator.online {
+  color: var(--accent-cyan);
+}
+
+.status-indicator.online::before {
+  animation: pulse-glow 1.5s infinite alternate;
+}
+
+/* Blinking Animation for Status */
+@keyframes pulse-glow {
+  0% {
+    opacity: 0.4;
+    box-shadow: 0 0 2px var(--accent-cyan);
+  }
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 10px var(--accent-cyan);
+  }
+}
+
+/* PANEL: Clock & Date Details (Top-Left) */
+.top-left-panel {
+  grid-column: 1;
+  grid-row: 1;
+  max-width: 380px;
+  align-self: start;
+}
+
+#hud-clock {
+  font-family: var(--font-mono);
+  font-size: 42px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  text-shadow: 0 0 12px rgba(0, 212, 255, 0.45);
+  letter-spacing: 1px;
+  margin-bottom: 2px;
+}
+
+#hud-date {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  color: var(--text-muted);
+  letter-spacing: 2px;
+  margin-bottom: 12px;
+}
+
+.system-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.alert-item {
+  font-family: var(--font-hud);
+  font-size: 9px;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.alert-item .bullet {
+  width: 4px;
+  height: 4px;
+  background-color: var(--primary-pink);
+  transform: rotate(45deg);
+}
+
+/* Now Playing (music metadata) */
+.now-playing {
+  margin-top: 10px;
+  border-top: 1px dashed rgba(138, 159, 196, 0.2);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.np-label {
+  font-family: var(--font-hud);
+  font-size: 8px;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+}
+
+.np-track {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent-cyan);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.np-artist {
+  font-family: var(--font-body);
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* PANEL: Divergence Meter (Top-Right) */
+.top-right-panel {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  align-self: start;
+  width: 380px;
+  border-color: rgba(255, 122, 0, 0.15);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), inset 0 0 12px rgba(255, 122, 0, 0.03);
+}
+
+.top-right-panel:hover {
+  border-color: rgba(255, 122, 0, 0.45);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(255, 122, 0, 0.08);
+}
+
+/* Nixie Tube Styling */
+.divergence-meter {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 122, 0, 0.2);
+  margin-bottom: 8px;
+}
+
+.nixie-digit {
+  font-family: var(--font-mono);
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--nixie-amber);
+  text-shadow: 
+    0 0 2px var(--nixie-amber),
+    0 0 8px rgba(255, 122, 0, 0.6),
+    0 0 18px rgba(255, 122, 0, 0.4);
+  letter-spacing: 2px;
+  transition: text-shadow 0.1s ease;
+}
+
+.nixie-dot {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 900;
+  color: var(--nixie-amber);
+  text-shadow: 
+    0 0 6px rgba(255, 122, 0, 0.8),
+    0 0 18px rgba(255, 122, 0, 0.5);
+  margin: 0 4px;
+}
+
+.field-label {
+  font-family: var(--font-hud);
+  font-size: 9px;
+  color: var(--text-muted);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 2.5px;
+}
+
+/* World Line Interference Map (audio-reactive particle constellation) */
+.world-line-monitor {
+  margin-top: 12px;
+  border-top: 1px dashed rgba(138, 159, 196, 0.2);
+  padding-top: 10px;
+}
+
+.world-line-frame {
+  position: relative;
+  height: 160px;
+  border: 1px solid rgba(138, 159, 196, 0.15);
+  border-radius: 4px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(126, 211, 250, 0.04), transparent 65%),
+    rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.world-line-frame canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.world-line-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+}
+
+#wl-delta {
+  color: #7ed3fa;
+  text-shadow: 0 0 6px rgba(126, 211, 250, 0.6);
+}
+
+#wl-attractor {
+  color: rgba(255, 122, 0, 0.85);
+  text-shadow: 0 0 6px rgba(255, 122, 0, 0.5);
+}
+
+/* PANEL: Center HUD Banner */
+.center-banner {
+  grid-column: 1 / span 2;
+  grid-row: 2;
+  /* Anchored to the bottom-center so it clears Kurisu's face and the audio ring */
+  place-self: end center;
+  margin-bottom: 24px;
+  text-align: center;
+  animation: float-slow 4s ease-in-out infinite alternate;
+}
+
+@keyframes float-slow {
+  0% { transform: translateY(0px); }
+  100% { transform: translateY(-6px); }
+}
+
+.sync-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(10, 10, 18, 0.65);
+  padding: 10px 24px;
+  border-radius: 4px;
+  border-left: 3px solid var(--primary-pink);
+  border-right: 3px solid var(--accent-cyan);
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.4);
+}
+
+.sync-status span {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--text-main);
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+}
+
+.pulse-circle {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--primary-pink);
+  box-shadow: 0 0 10px var(--primary-pink);
+  animation: pulse-ring 1.8s infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.85);
+    box-shadow: 0 0 2px var(--primary-pink);
+  }
+  50% {
+    transform: scale(1.15);
+    box-shadow: 0 0 12px var(--primary-pink);
+  }
+  100% {
+    transform: scale(0.85);
+    box-shadow: 0 0 2px var(--primary-pink);
+  }
+}
+
+/* PANEL: Realtime News Feed (Bottom-Left) */
+.bottom-left-panel {
+  grid-column: 1;
+  grid-row: 3;
+  align-self: end;
+}
+
+.bottom-left-panel .panel-body {
+  flex-grow: 1;
+  overflow: hidden;
+}
+
+.news-container {
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+/* Custom Scrollbar for News Feed */
+.news-container::-webkit-scrollbar {
+  width: 3px;
+}
+.news-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.news-container::-webkit-scrollbar-thumb {
+  background: rgba(230, 0, 38, 0.2);
+  border-radius: 1px;
+}
+.news-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(230, 0, 38, 0.5);
+}
+
+.news-loading {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--accent-cyan);
+  animation: scan-flicker 0.15s infinite alternate;
+}
+
+.news-item {
+  display: block;
+  text-decoration: none;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  padding-bottom: 8px;
+  transition: background 0.2s ease;
+}
+
+.news-item:hover {
+  background: rgba(230, 0, 38, 0.04);
+}
+
+.news-title {
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  line-height: 1.4;
+  margin-bottom: 2px;
+  transition: color 0.15s ease;
+}
+
+.news-item:hover .news-title {
+  color: var(--accent-cyan);
+}
+
+.news-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 12px;
+}
+
+.news-domain {
+  color: var(--primary-pink);
+  font-weight: bold;
+}
+
+.pulse-text {
+  font-family: var(--font-hud);
+  font-size: 9px;
+  font-weight: 900;
+  color: var(--primary-pink);
+  animation: blink-fast 1s infinite steps(2, start);
+}
+
+@keyframes blink-fast {
+  to { visibility: hidden; }
+}
+
+/* PANEL: System Telemetry Stats (Bottom-Right) */
+.bottom-right-panel {
+  grid-column: 2;
+  grid-row: 3;
+  width: 420px;
+  justify-self: end;
+  align-self: end;
+}
+
+.telemetry-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.telemetry-item {
+  width: 100%;
+}
+
+.tel-label {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  margin-bottom: 4px;
+}
+
+.tel-name {
+  font-family: var(--font-body);
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  letter-spacing: 0.5px;
+}
+
+/* Telemetry Horizontal Bars */
+.tel-bar-bg {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tel-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  transition: width 0.4s cubic-bezier(0.1, 0.8, 0.2, 1);
+}
+
+.bar-cyan {
+  background: linear-gradient(90deg, rgba(0,212,255,0.4), var(--accent-cyan));
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.6);
+}
+
+.bar-pink {
+  background: linear-gradient(90deg, rgba(255,107,157,0.4), var(--primary-pink));
+  box-shadow: 0 0 8px rgba(255, 107, 157, 0.6);
+}
+
+.bar-violet {
+  background: linear-gradient(90deg, rgba(196,113,237,0.4), var(--accent-violet));
+  box-shadow: 0 0 8px rgba(196, 113, 237, 0.6);
+}
+
+/* Network Telemetry Flow */
+.net-flow-container {
+  display: flex;
+  gap: 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.net-direction {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dir-icon {
+  font-size: 8px;
+}
+
+.net-direction:first-child .dir-icon {
+  color: var(--accent-cyan);
+  text-shadow: 0 0 4px var(--accent-cyan);
+}
+
+.net-direction:last-child .dir-icon {
+  color: var(--primary-pink);
+  text-shadow: 0 0 4px var(--primary-pink);
+}
+
+/* Responsive adjustment for small screens (Lively preview windows) */
+@media (max-height: 550px) {
+  #hud-container {
+    padding: 10px;
+    gap: 10px;
+  }
+  .hud-panel {
+    padding: 10px;
+  }
+  .bottom-left-panel, .bottom-right-panel {
+    height: 150px;
+  }
+  .center-banner {
+    display: none;
+  }
+}

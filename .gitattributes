@@ -1,0 +1,15 @@
+# Normalize to LF on commit; check out with native line endings on Windows
+* text=auto
+
+# Binary assets (never diff)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.moc binary
+*.moc3 binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
