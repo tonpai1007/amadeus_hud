@@ -14,3 +14,7 @@ Desktop.ini
 *.tmp
 *.orig
 *.old
+
+# Secrets (never commit API keys)
+openrouter-key.js
+brain-key.js

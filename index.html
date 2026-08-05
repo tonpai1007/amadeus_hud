@@ -19,9 +19,18 @@
 <body>
   <!-- HTML Canvas for 2D Audio Visualizer Ring (with cursor gravitational lensing) -->
   <canvas id="audio-canvas"></canvas>
-  
+
+  <!-- Live2D character lighting & grounding -->
+  <div class="l2d-aura" id="l2d-aura"></div>
+  <div class="l2d-shadow" id="l2d-shadow"></div>
+
   <!-- Live2D Makise Kurisu Canvas -->
   <canvas id="live2d-canvas"></canvas>
+
+  <!-- Kurisu speech bubble (type to talk, Enter to send) -->
+  <div class="kurisu-bubble" id="kurisu-bubble">
+    <span class="bubble-text" id="kurisu-bubble-text"></span><span class="bubble-caret" id="kurisu-bubble-caret"></span>
+  </div>
 
   <!-- Futuristic Scanline & Digital Grid Overlay -->
   <div class="crt-overlay"></div>
@@ -106,71 +115,10 @@
       </div>
     </section>
 
-    <!-- BOTTOM RIGHT: Telemetry Dashboard -->
-    <section class="hud-panel bottom-right-panel">
-      <div class="panel-header">
-        <span class="panel-tag">// SYSTEM_RESOURCE_STATS</span>
-      </div>
-      <div class="panel-body">
-        <div class="telemetry-grid">
-          <!-- CPU -->
-          <div class="telemetry-item">
-            <div class="tel-label">
-              <span>CPU</span>
-              <span id="cpu-value">--%</span>
-            </div>
-            <div class="tel-bar-bg">
-              <div class="tel-bar-fill bar-cyan" id="cpu-bar" style="width: 0%"></div>
-            </div>
-            <div class="tel-name" id="cpu-name">Detecting Processor...</div>
-          </div>
-
-          <!-- GPU -->
-          <div class="telemetry-item">
-            <div class="tel-label">
-              <span>GPU</span>
-              <span id="gpu-value">--%</span>
-            </div>
-            <div class="tel-bar-bg">
-              <div class="tel-bar-fill bar-pink" id="gpu-bar" style="width: 0%"></div>
-            </div>
-            <div class="tel-name" id="gpu-name">Detecting Graphics...</div>
-          </div>
-
-          <!-- RAM -->
-          <div class="telemetry-item">
-            <div class="tel-label">
-              <span>RAM</span>
-              <span id="ram-value">-- / -- MB</span>
-            </div>
-            <div class="tel-bar-bg">
-              <div class="tel-bar-fill bar-violet" id="ram-bar" style="width: 0%"></div>
-            </div>
-            <div class="tel-name">System Memory Allocation</div>
-          </div>
-
-          <!-- Network -->
-          <div class="telemetry-item">
-            <div class="tel-label">
-              <span>NET SYNC</span>
-              <span id="net-value">↓0.00 Mb/s ↑0.00 Mb/s</span>
-            </div>
-            <div class="net-flow-container">
-              <div class="net-direction">
-                <span class="dir-icon">▼</span> Down: <span id="net-down-mb">0.0</span> MB/s
-              </div>
-              <div class="net-direction">
-                <span class="dir-icon">▲</span> Up: <span id="net-up-mb">0.0</span> MB/s
-              </div>
-            </div>
-            <div class="tel-name" id="net-name">Active Interface</div>
-          </div>
-        </div>
-      </div>
-    </section>
-
   </div>
 
+  <script src="openrouter-key.js"></script>
+  <script src="brain-key.js"></script>
   <script src="wallpaper.js"></script>
 </body>
 </html>

@@ -2,8 +2,8 @@
   "AppVersion": "1.0.0.0",
   "Title": "AMADEUS Convergence Sync HUD",
   "Thumbnail": "thumbnail.png",
-  "Desc": "Interactive, sound-reactive AMADEUS cognitive sync HUD. Features mouse tracking, audio visualizer, divergence meter, and system telemetry.",
+  "Desc": "Interactive, sound-reactive AMADEUS cognitive sync HUD. Features mouse tracking, audio visualizer, divergence meter, and realtime news feed.",
   "Author": "AMADEUS",
   "FileName": "index.html",
-  "Arguments": "--audio --system-information --pause-event true --system-nowplaying"
+  "Arguments": "--audio --pause-event true --system-nowplaying"
 }

@@ -25,14 +25,18 @@ let gearSnapshot = null;     // offscreen snapshot of the rotating gears layer
 // Lively keeps pushing near-zero audio arrays when the system is silent, so we
 // drop to a slow idle state until real audio or mouse activity returns.
 const IDLE_THRESHOLD_MS = 8000;
+const SLEEP_THRESHOLD_MS = 20 * 60 * 1000; // no activity for 20 min = Kurisu falls asleep
 const ACTIVITY_ENERGY = 0.02; // audio bins above this count as "real sound"
 let lastActivityTime = performance.now();
 let isIdle = false;
+let isSleeping = false;
 let isLivelyPaused = false; // set by --pause-event
 
 // Nixie Tube target convergence
 const defaultConvergence = "0.986254";
-let nixieFlickerCount = 0;
+let currentConvergence = defaultConvergence; // live nixie reading (feeds DELTA readout)
+let lastNixieShift = 0;                      // cooldown guard against audio spam
+let nixieTimer = null;                       // shift-cycle timer
 
 // Cursor position (normalized 0..1) for the audio-ring gravitational distortion
 let cursorNX = 0.5;
@@ -43,11 +47,15 @@ let cursorSeen = false;
 window.addEventListener('DOMContentLoaded', () => {
   initClock();
   initAudioCanvas();
-  initLive2D();
+  initLive2D().then(kurisuGreetOnLoad);
   initWorldLine();
   fetchRealtimeNews();
   startIdleWatchdog();
+  scheduleIdleChatter();
+  initKurisuBubble();
+  initKurisuChatInput();
   startNixieAmbientFlicker();
+  startNixieIntro();
   applyTimeOfDay();
   setInterval(applyTimeOfDay, 60 * 1000);
 
@@ -63,6 +71,11 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('pointerdown', () => {
     if (isLivelyPaused) return;
     triggerWorldLineShift();
+    // One-time hint that Kurisu can be talked to
+    if (!kurisuHintShown) {
+      kurisuHintShown = true;
+      setTimeout(() => showKurisuBubble('[ type a message - press Enter to talk to me ]', 5000), 700);
+    }
   }, { passive: true });
   
   // Start simulation loop (will run if Lively events aren't received)
@@ -74,11 +87,408 @@ window.addEventListener('DOMContentLoaded', () => {
   }, 2500);
 });
 
+// --- KURISU CHAT (type to talk) ---
+// Kurisu's brain tries, in order: AMADEUS Brain (local FastAPI, memory +
+// emotion) -> OpenRouter (fast cloud, no local CPU/GPU load) if a key is
+// configured -> local Ollama (free, offline) if its server is up -> a canned
+// Steins;Gate-flavored reply pool. Typing goes to a hidden buffer; Enter sends,
+// Escape dismisses.
+const KURISU_BRAIN = {
+  // Local AMADEUS Brain (set your key in brain-key.js)
+  endpoint: 'http://127.0.0.1:8000',
+  timeoutMs: 95000,
+  apiKey: (typeof window !== 'undefined' && window.KURISU_BRAIN_KEY &&
+           window.KURISU_BRAIN_KEY.indexOf('REPLACE') === -1)
+      ? window.KURISU_BRAIN_KEY
+      : '',
+};
+
+const KURISU_LLM = {
+  // Cloud: OpenRouter (set your key in openrouter-key.js)
+  endpoint: 'https://openrouter.ai/api/v1',
+  model: 'google/gemma-4-31b-it:free',
+  timeoutMs: 20000,
+  apiKey: (typeof window !== 'undefined' && window.KURISU_OPENROUTER_KEY &&
+           window.KURISU_OPENROUTER_KEY.indexOf('REPLACE') === -1)
+      ? window.KURISU_OPENROUTER_KEY
+      : '',
+  // Local fallback: Ollama (free, offline)
+  fallbackEndpoint: 'http://localhost:11434',
+  fallbackModel: 'qwen3:4b',
+  fallbackTimeoutMs: 6000,
+};
+
+const KURISU_SYSTEM_PROMPT =
+  "You are Makise Kurisu, the 18-year-old neuroscience prodigy from Steins;Gate. " +
+  "Respond in character: sharp, a little tsundere, scientifically precise, occasionally flustered. " +
+  "Weave in a Steins;Gate reference when it fits (world lines, divergence meter, D-Mail, the lab, Daru, Okabe). " +
+  "Keep replies to ONE short sentence, at most two. No markdown, no emojis, no character labels.";
+
+// Offline fallback lines (used whenever Ollama isn't reachable)
+const KURISU_CANNED = [
+  "Typical. You really did change the world line just to talk to me.",
+  "For the record, I'm a scientist, not your lab assistant.",
+  "The divergence is reading 0.986254... and rising. Don't ask why I know that offhand.",
+  "If you're drafting a D-Mail right now, I will delete it myself.",
+  "Okabe's delusions are contagious, and clearly you've caught them.",
+  "Hmm. Statistically, you standing here typing at a wall is... improbable.",
+  "This conversation is going straight into the lab memos. Don't say anything foolish.",
+  "I've told you before - I'm not your girlfriend. Now, what was it you wanted?",
+  "Curious. Your persistence implies a suspiciously high curiosity coefficient.",
+  "El Psy Kongroo. ...Yes, I said it. Happy now?",
+];
+
+// Ambient chatter — occasionally she mutters something unprompted while you're
+// at the desk, but never while typing or while the system is idle/asleep.
+const KURISU_IDLE_LINES = [
+  "The divergence meter's drifting again. You're not messing with it, are you?",
+  "I calculated the probability of you noticing the submonitor feed. It was... low.",
+  "You've been quiet. Contemplating world lines, or just caffeine wear-off?",
+  "Daru isn't here to make the jokes, so someone has to fill the silence.",
+  "El Psy Kongroo... don't make me say it again.",
+  "I ran a simulation. Statistically, you should take a break soon. Purely science.",
+  "The lab memos say you're overdue for a D-Mail. I'm joking. Mostly.",
+  "Your typing has a characteristic rhythm. I'd recognize it anywhere.",
+  "Careful. I'm still calibrating, and the lab's espresso machine is a conspiracy in itself.",
+];
+
+// She says one of these when you come back after a long absence.
+const KURISU_WAKE_LINES = [
+  "Ah... you're back. I wasn't asleep. I was... calibrating.",
+  "Waking me up had better be worth it. What is it?",
+  "Hmph. I was just resting my eyes. Statistically, you're late.",
+  "Welcome back. The divergence meter kept running without you.",
+  "You returned. Good. The lab memos are all in order.",
+];
+
+let kurisuBubbleEl = null;
+let kurisuBubbleTextEl = null;
+let kurisuBubbleCaretEl = null;
+let kurisuBubbleTimer = null;
+let kurisuTypingTimer = null;
+let kurisuIdleChatterTimer = null;
+let kurisuInput = '';
+let kurisuGreeted = false;
+let kurisuHintShown = false;
+
+function initKurisuBubble() {
+  kurisuBubbleEl = document.getElementById('kurisu-bubble');
+  if (!kurisuBubbleEl) return;
+  kurisuBubbleTextEl = document.getElementById('kurisu-bubble-text');
+  kurisuBubbleCaretEl = document.getElementById('kurisu-bubble-caret');
+  // Clicking the bubble dismisses it without also shifting the world line
+  kurisuBubbleEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+  kurisuBubbleEl.addEventListener('click', () => hideKurisuBubble());
+}
+
+function positionKurisuBubble() {
+  if (!kurisuBubbleEl || !live2DController || !live2DController.model) return;
+  const model = live2DController.model;
+  const view = live2DController.app && live2DController.app.view;
+  if (!view) return;
+  const rect = view.getBoundingClientRect();
+  if (rect.width === 0) return;
+  const scale = rect.width / view.width;
+  const headTop = (model.y - model.height * 0.5) * scale; // top of her head
+  const bubbleH = kurisuBubbleEl.offsetHeight || 60;
+  kurisuBubbleEl.style.left = Math.max(12, Math.min(rect.width - 340, model.x * scale - 40)) + 'px';
+  kurisuBubbleEl.style.top = Math.max(8, headTop - bubbleH - 10) + 'px';
+}
+
+function showKurisuBubble(text, durationMs) {
+  if (!kurisuBubbleEl) return;
+  clearTimeout(kurisuBubbleTimer);
+  clearInterval(kurisuTypingTimer);
+  kurisuBubbleEl.classList.add('visible');
+  positionKurisuBubble();
+
+  // Typewriter effect
+  kurisuBubbleTextEl.textContent = '';
+  kurisuBubbleCaretEl.classList.remove('hidden');
+  let i = 0;
+  kurisuTypingTimer = setInterval(() => {
+    i += 1;
+    kurisuBubbleTextEl.textContent = text.slice(0, i);
+    positionKurisuBubble();
+    if (i >= text.length) {
+      clearInterval(kurisuTypingTimer);
+      kurisuBubbleCaretEl.classList.add('hidden');
+    }
+  }, 18);
+
+  kurisuBubbleTimer = setTimeout(hideKurisuBubble, durationMs || 8000);
+}
+
+function hideKurisuBubble() {
+  clearTimeout(kurisuBubbleTimer);
+  clearInterval(kurisuTypingTimer);
+  if (kurisuBubbleEl) {
+    kurisuBubbleEl.classList.remove('visible');
+    if (kurisuBubbleTextEl) kurisuBubbleTextEl.textContent = '';
+  }
+}
+
+// --- Kurisu's brain: AMADEUS Brain first, then OpenRouter, Ollama, canned ---
+async function askKurisu(userText) {
+  const messages = [
+    { role: 'system', content: KURISU_SYSTEM_PROMPT },
+    { role: 'user', content: userText },
+  ];
+
+  // 0) AMADEUS Brain (local FastAPI): memory recall + explicit emotion
+  if (KURISU_BRAIN.apiKey) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), KURISU_BRAIN.timeoutMs);
+      const res = await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${KURISU_BRAIN.apiKey}`,
+        },
+        body: JSON.stringify({ message: userText, user_id: 'wallpaper', history: [] }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error('Brain HTTP ' + res.status);
+      const data = await res.json();
+      const reply = (data.response || '').trim();
+      if (!reply) throw new Error('Empty Brain reply');
+      return { text: reply, emotion: data.emotion || emotionFromText(reply), source: 'brain' };
+    } catch (err) {
+      console.warn('[Kurisu] Brain unreachable, trying OpenRouter:', err.message);
+    }
+  }
+
+  // 1) Cloud: OpenRouter - fast replies, no local CPU/GPU cost
+  if (KURISU_LLM.apiKey) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), KURISU_LLM.timeoutMs);
+      const res = await fetch(`${KURISU_LLM.endpoint}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${KURISU_LLM.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: KURISU_LLM.model,
+          messages,
+          temperature: 0.8,
+          max_tokens: 120,
+        }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error('OpenRouter HTTP ' + res.status);
+      const data = await res.json();
+      const reply = (data.choices && data.choices[0] && data.choices[0].message &&
+                     data.choices[0].message.content || '').trim();
+      if (!reply) throw new Error('Empty OpenRouter reply');
+      return { text: reply, source: 'cloud' };
+    } catch (err) {
+      console.warn('[Kurisu] OpenRouter unreachable, trying local Ollama:', err.message);
+    }
+  }
+
+  // 2) Local: Ollama (free, offline) if the server is up
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), KURISU_LLM.fallbackTimeoutMs);
+    const res = await fetch(`${KURISU_LLM.fallbackEndpoint}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: KURISU_LLM.fallbackModel, messages, stream: false }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error('Ollama HTTP ' + res.status);
+    const data = await res.json();
+    const reply = (data && data.message && data.message.content || '').trim();
+    if (!reply) throw new Error('Empty Ollama reply');
+    return { text: reply, source: 'llm' };
+  } catch (err) {
+    console.warn('[Kurisu] Ollama unreachable, using canned reply:', err.message);
+  }
+
+  // 3) Canned Steins;Gate-flavored lines
+  return { text: KURISU_CANNED[Math.floor(Math.random() * KURISU_CANNED.length)], source: 'canned' };
+}
+
+// Map her reply's tone onto a Live2D expression
+function emotionFromText(text) {
+  const t = text.toLowerCase();
+  if (/\b(wow|amazing|incredible|unbelievable|surpris|wonderful)\b/.test(t)) return 'surprised';
+  if (/\b(sad|sorry|miss|lost|lonely|cry|worry)\b/.test(t)) return 'sad';
+  if (/\b(angry|annoy|idiot|fool|jerk|stupid|baka|nonsense)\b/.test(t)) return 'annoyed';
+  if (/\b(happy|smile|laugh|love|glad|fun|great|fascinating)\b/.test(t)) return 'happy';
+  if (/\b(hmm|maybe|think|science|probability|experiment|theory)\b/.test(t)) return 'thinking';
+  return 'content';
+}
+
+async function kurisuSay(userText) {
+  if (!kurisuBubbleEl) return;
+  // She mulls it over while the LLM thinks
+  if (live2DController && live2DController.setEmotion) {
+    live2DController.setEmotion('thinking');
+  }
+  const reply = await askKurisu(userText.trim());
+  showKurisuBubble(reply.text, 8000);
+  // ...and reacts to her own words (Brain supplies an explicit emotion tag).
+  // Hold the face ~7s so the reaction is visible before ambient mood resumes.
+  if (live2DController && live2DController.setEmotion) {
+    live2DController.setEmotion(reply.emotion || emotionFromText(reply.text), 7000);
+  }
+}
+
+function timeAwareGreeting() {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12) return "Good morning. The lab's quiet at this hour. What's on your mind?";
+  if (h >= 12 && h < 18) return "Good afternoon. I've been monitoring the divergence meter, naturally.";
+  if (h >= 18 && h < 23) return "Good evening. The data's still compiling... as am I.";
+  return "Still awake? The world line never sleeps. Apparently neither do you.";
+}
+
+// Greet on wallpaper load: instant time-aware line, then a personalized hello
+// from the AMADEUS Brain (memory-backed) when it arrives.
+function kurisuGreetOnLoad() {
+  if (!kurisuBubbleEl) return;
+  showKurisuBubble(timeAwareGreeting(), 5500);
+
+  if (!KURISU_BRAIN.apiKey) return;
+  (async () => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 25000);
+      const res = await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/hello`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${KURISU_BRAIN.apiKey}` },
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) return;
+      const data = await res.json();
+      const reply = (data.response || '').trim();
+      if (!reply) return;
+      setTimeout(() => {
+        if (isIdle || isSleeping || kurisuInput) return;
+        showKurisuBubble(reply, 8000);
+        if (live2DController && live2DController.setEmotion) {
+          live2DController.setEmotion(data.emotion || emotionFromText(reply), 7000);
+        }
+      }, 5700);
+    } catch (err) {
+      console.warn('[Kurisu] Greeting hello failed (using time-aware line):', err.message);
+    }
+  })();
+}
+
+// Kurisu's own spontaneous thought, generated by the AMADEUS Brain from her
+// memories + recent conversation + time of day. Falls back to null on failure.
+async function kurisuThink() {
+  if (!KURISU_BRAIN.apiKey) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  try {
+    const res = await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/think`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${KURISU_BRAIN.apiKey}`,
+      },
+      body: JSON.stringify({ user_id: 'wallpaper' }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error('Brain think HTTP ' + res.status);
+    const data = await res.json();
+    const reply = (data.response || '').trim();
+    if (!reply) throw new Error('Empty think reply');
+    return { text: reply, emotion: data.emotion || emotionFromText(reply) };
+  } catch (err) {
+    clearTimeout(timer);
+    console.warn('[Kurisu] think failed, using canned line:', err.message);
+    return null;
+  }
+}
+
+// Unprompted chatter while the user is around but not talking: real thoughts
+// from the Brain when possible, canned lines otherwise.
+function scheduleIdleChatter() {
+  const delay = (10 + Math.random() * 8) * 60 * 1000; // 10-18 minutes
+  kurisuIdleChatterTimer = setTimeout(async () => {
+    const canSpeak = () => !isIdle && !isSleeping && !kurisuInput && kurisuBubbleEl &&
+        !kurisuBubbleEl.classList.contains('visible');
+
+    if (canSpeak()) {
+      // She mulls it over while the thought is generated
+      if (live2DController && live2DController.setEmotion) {
+        live2DController.setEmotion('thinking', 4000);
+      }
+      let text = null;
+      let emotion = 'thinking';
+      const thought = await kurisuThink();
+      if (thought) {
+        text = thought.text;
+        emotion = thought.emotion;
+      } else {
+        text = KURISU_IDLE_LINES[Math.floor(Math.random() * KURISU_IDLE_LINES.length)];
+      }
+      // Re-check: the user may have started typing or the system went idle
+      if (canSpeak()) {
+        showKurisuBubble(text, 8000);
+        if (live2DController && live2DController.setEmotion) {
+          live2DController.setEmotion(emotion, 7000);
+        }
+      }
+    }
+    scheduleIdleChatter();
+  }, delay);
+}
+
+function initKurisuChatInput() {
+  window.addEventListener('keydown', (e) => {
+    if (isLivelyPaused) return;
+    markActivity();
+    if (e.key === 'Enter') {
+      if (kurisuInput.trim()) {
+        const msg = kurisuInput.trim();
+        kurisuInput = '';
+        kurisuSay(msg);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      kurisuInput = '';
+      hideKurisuBubble();
+      return;
+    }
+    if (e.key === 'Backspace') {
+      kurisuInput = kurisuInput.slice(0, -1);
+      return;
+    }
+    if (e.key.length === 1) {
+      kurisuInput += e.key;
+      // "hello" triggers the classic lab greeting without pressing Enter
+      if (!kurisuGreeted && /\bhello\b/i.test(kurisuInput)) {
+        kurisuGreeted = true;
+        kurisuSay('hello');
+        kurisuInput = '';
+        return;
+      }
+      if (live2DController && live2DController.setEmotion) {
+        live2DController.setEmotion('content'); // she notices you typing
+      }
+    }
+  });
+}
+
 // --- ADAPTIVE IDLE POWER SAVING ---
 // When the system is silent and the mouse is idle, throttle everything down.
 function markActivity() {
   lastActivityTime = performance.now();
   if (isIdle) enterIdleState(false);
+  if (isSleeping) enterSleepState(false);
 }
 
 function startIdleWatchdog() {
@@ -88,14 +498,47 @@ function startIdleWatchdog() {
     if (!isIdle && inactiveFor >= IDLE_THRESHOLD_MS) {
       enterIdleState(true);
     }
+    if (!isSleeping && inactiveFor >= SLEEP_THRESHOLD_MS) {
+      enterSleepState(true);
+    }
   }, 2000);
+}
+
+// Long absence (20 min without any input/audio) = Kurisu actually falls asleep.
+function enterSleepState(sleep) {
+  if (isSleeping === sleep) return;
+  isSleeping = sleep;
+  if (sleep) {
+    hideKurisuBubble();
+    if (live2DController && live2DController.setEmotion) {
+      live2DController.setEmotion('sleepy');
+    }
+    console.log('AMADEUS HUD: Kurisu fell asleep (no activity for 20 min).');
+  } else {
+    // Waking up: brief surprised flash, then a short wake line.
+    if (live2DController && live2DController.setEmotion) {
+      live2DController.setEmotion('surprised', 2500);
+    }
+    setTimeout(() => {
+      if (isSleeping || !kurisuBubbleEl) return;
+      const line = KURISU_WAKE_LINES[Math.floor(Math.random() * KURISU_WAKE_LINES.length)];
+      showKurisuBubble(line, 6000);
+    }, 900);
+    console.log('AMADEUS HUD: Kurisu woke up.');
+  }
 }
 
 function enterIdleState(idle) {
   if (isIdle === idle) return;
   isIdle = idle;
+  // body.idle lets CSS fade the HUD chrome and pause decorative animations
+  document.body.classList.toggle('idle', idle);
   if (live2DController && live2DController.setIdleMode) {
     live2DController.setIdleMode(idle);
+  }
+  if (live2DController && live2DController.setEmotion) {
+    // System silence reads as a sleepy Kurisu; activity wakes her up neutral
+    live2DController.setEmotion(idle ? 'tired' : 'neutral');
   }
   if (idle) {
     console.log("AMADEUS HUD: entering idle power-saving mode.");
@@ -119,6 +562,9 @@ function startNixieAmbientFlicker() {
 // the HUD jitters through a chromatic glitch before snapping back.
 function triggerWorldLineShift() {
   triggerNixieFlicker();
+  if (live2DController && live2DController.triggerSurprise) {
+    live2DController.triggerSurprise();
+  }
   document.body.classList.add('world-line-shifting');
   clearTimeout(triggerWorldLineShift._timer);
   triggerWorldLineShift._timer = setTimeout(() => {
@@ -171,8 +617,9 @@ function seedWorldLine() {
       y: Math.random(),
       vx: (Math.random() - 0.5) * 0.4,
       vy: (Math.random() - 0.5) * 0.4,
-      r: 0.6 + Math.random() * 1.6,
-      rose: Math.random() < 0.28
+      r: 1.1 + Math.random() * 1.9,
+      rose: Math.random() < 0.28,
+      phase: Math.random() * Math.PI * 2
     });
   }
 }
@@ -206,7 +653,7 @@ function updateWorldLine() {
   }
 
   // Constellations: link nearby nodes, brightness scales with audio
-  const linkMax = (0.24 - pulse * 0.05) * w;
+  const linkMax = (0.27 - pulse * 0.05) * w;
   const linkMax2 = linkMax * linkMax;
   for (let i = 0; i < worldLineParticles.length; i++) {
     const a = worldLineParticles[i];
@@ -217,7 +664,7 @@ function updateWorldLine() {
       const d2 = ddx * ddx + ddy * ddy;
       if (d2 < linkMax2) {
         const t = 1 - Math.sqrt(d2) / linkMax;
-        wlCtx.strokeStyle = `rgba(126, 211, 250, ${(t * (0.16 + pulse * 0.4)).toFixed(3)})`;
+        wlCtx.strokeStyle = `rgba(126, 211, 250, ${(t * (0.24 + pulse * 0.45)).toFixed(3)})`;
         wlCtx.lineWidth = 1;
         wlCtx.beginPath();
         wlCtx.moveTo(a.x * w, a.y * h);
@@ -227,23 +674,38 @@ function updateWorldLine() {
     }
   }
 
-  // Nodes
+  // Nodes — soft halo behind a bright core so they stay readable on any bg
+  const t = performance.now() / 1000;
   for (const p of worldLineParticles) {
+    const x = p.x * w;
+    const y = p.y * h;
+    const twinkle = 0.8 + 0.2 * Math.sin(t * 2 + p.phase);
     const glow = p.r * (1 + pulse * 2.2);
+    const rgb = p.rose ? '255, 77, 109' : '126, 211, 250';
+    // halo
     wlCtx.beginPath();
-    if (p.rose) {
-      wlCtx.fillStyle = `rgba(255, 77, 109, ${(0.5 + pulse * 0.5).toFixed(3)})`;
-    } else {
-      wlCtx.fillStyle = `rgba(126, 211, 250, ${(0.5 + pulse * 0.5).toFixed(3)})`;
-    }
-    wlCtx.arc(p.x * w, p.y * h, glow, 0, Math.PI * 2);
+    wlCtx.fillStyle = `rgba(${rgb}, ${(0.14 * twinkle + pulse * 0.3).toFixed(3)})`;
+    wlCtx.arc(x, y, glow * 2.6, 0, Math.PI * 2);
+    wlCtx.fill();
+    // core
+    wlCtx.beginPath();
+    wlCtx.fillStyle = `rgba(${rgb}, ${(0.85 * twinkle).toFixed(3)})`;
+    wlCtx.arc(x, y, glow, 0, Math.PI * 2);
     wlCtx.fill();
   }
 
-  // Amber attractor core at the center of the world line
+  // Amber attractor core + range rings at the center of the world line
+  const coreR = 3 + pulse * 6;
+  for (const rr of [coreR * 2.5, coreR * 4.5]) {
+    wlCtx.beginPath();
+    wlCtx.strokeStyle = `rgba(255, 122, 0, ${(0.14 + pulse * 0.25).toFixed(3)})`;
+    wlCtx.lineWidth = 1;
+    wlCtx.arc(cx, cy, rr, 0, Math.PI * 2);
+    wlCtx.stroke();
+  }
   wlCtx.beginPath();
-  wlCtx.fillStyle = `rgba(255, 122, 0, ${(0.55 + pulse * 0.45).toFixed(3)})`;
-  wlCtx.arc(cx, cy, 3 + pulse * 6, 0, Math.PI * 2);
+  wlCtx.fillStyle = `rgba(255, 122, 0, ${(0.6 + pulse * 0.4).toFixed(3)})`;
+  wlCtx.arc(cx, cy, coreR, 0, Math.PI * 2);
   wlCtx.fill();
 
   // Radar sweep arm
@@ -259,7 +721,10 @@ function updateWorldLine() {
 function updateWorldLineMeta() {
   const deltaEl = document.getElementById('wl-delta');
   if (!deltaEl) return;
-  const delta = worldLineEnergy * 0.25 + (Math.random() - 0.5) * 0.004;
+  // DELTA = live nixie reading minus the attractor (plus a whisper of audio
+  // jitter) — a real instrument readout instead of random noise.
+  const shown = parseFloat(currentConvergence) || parseFloat(defaultConvergence);
+  const delta = (shown - parseFloat(defaultConvergence)) + worldLineEnergy * 0.002;
   const sign = delta >= 0 ? '+' : '-';
   deltaEl.innerText = `DELTA ${sign}${Math.abs(delta).toFixed(4)}`;
 }
@@ -445,6 +910,25 @@ function drawAudioRing(fftData, now) {
       ctx.fill();
     }
   }
+
+  // 6. Ambient energy halo around Kurisu — two counter-rotating dashed rings
+  //    that swell and brighten with bass (cheap: 2 stroked arcs).
+  const haloR = Math.min(audioCanvas.width, audioCanvas.height) * (0.30 + bassAvg * 0.03);
+  const spin = now * 0.00015;
+  ctx.save();
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([2, 14]);
+  ctx.strokeStyle = `rgba(126, 211, 250, ${(0.05 + bassAvg * 0.18).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.arc(cx, cy, haloR, spin, spin + Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([18, 6]);
+  ctx.strokeStyle = `rgba(255, 77, 109, ${(0.04 + bassAvg * 0.14).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.arc(cx, cy, haloR * 0.9, -spin * 1.6, -spin * 1.6 + Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 
 // --- CLOCKWORK MECHANICAL BACKGROUND COMPONENT ---
@@ -609,39 +1093,93 @@ function drawClockworkBackground(ctx, cx, cy, bass) {
   });
 }
 
-// --- NIXIE CONVERGENCE FLICKER EFFECT ---
-function updateNixieDisplay(digitsString) {
+// --- NIXIE CONVERGENCE FLICKER & ROLL EFFECT ---
+// Hard-set every digit instantly (used by the rapid flicker phase).
+function setNixieDigits(digitsString) {
+  currentConvergence = digitsString;
   const digits = digitsString.replace('.', '').split('');
-  const nixieContainers = document.querySelectorAll('#divergence-meter .nixie-digit');
-  
-  nixieContainers.forEach((el, idx) => {
+  document.querySelectorAll('#divergence-meter .nixie-digit').forEach((el, idx) => {
+    if (el._rollRaf) cancelAnimationFrame(el._rollRaf);
     if (digits[idx] !== undefined) {
       el.innerText = digits[idx];
     }
   });
 }
 
-function triggerNixieFlicker() {
-  nixieFlickerCount = 15; // flicker for 15 frames
+// Roll each changed digit upward through the nixie stack like a real tube,
+// landing exactly on the target value with a brief bright "settle" pop.
+function rollNixieTo(digitsString) {
+  currentConvergence = digitsString;
+  const targets = digitsString.replace('.', '').split('');
+  document.querySelectorAll('#divergence-meter .nixie-digit').forEach((el, idx) => {
+    const target = targets[idx];
+    if (target === undefined) return;
+    const from = Number(el.innerText) || 0;
+    const to = Number(target);
+    if (from === to) return;
+    if (el._rollRaf) cancelAnimationFrame(el._rollRaf);
+    el.classList.remove('digit-settle');
+    let current = from;
+    el._rollRaf = requestAnimationFrame(function step() {
+      current = (current + 1) % 10;
+      el.innerText = String(current);
+      if (current === to) {
+        el.classList.add('digit-settle');
+        setTimeout(() => el.classList.remove('digit-settle'), 450);
+        return;
+      }
+      el._rollRaf = requestAnimationFrame(step);
+    });
+  });
 }
 
-function processNixieFlicker() {
-  if (nixieFlickerCount > 0) {
-    nixieFlickerCount--;
-    if (nixieFlickerCount === 0) {
-      // Resolve to default Attractor Field Divergence
-      updateNixieDisplay(defaultConvergence);
-    } else {
-      // Generate a string of random numbers for visual flicker
-      let randomDigits = "";
-      for (let i = 0; i < 7; i++) {
-        randomDigits += Math.floor(Math.random() * 10);
-      }
-      // Insert decimal point
-      randomDigits = randomDigits[0] + "." + randomDigits.substring(1);
-      updateNixieDisplay(randomDigits);
-    }
-  }
+// Boot-up sequence: scramble the digits once, then roll them home.
+function startNixieIntro() {
+  let scramble = "";
+  for (let i = 0; i < 7; i++) scramble += Math.floor(Math.random() * 10);
+  scramble = scramble[0] + "." + scramble.substring(1);
+  setNixieDigits(scramble);
+  setTimeout(() => rollNixieTo(defaultConvergence), 120);
+}
+
+// The shift reading is derived from real inputs — live bass energy plus the
+// current clock — so the value is deterministic at any moment and actually
+// "measures" the world line instead of showing arbitrary digits.
+function computeShiftedConvergence() {
+  const now = new Date();
+  const t = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  const audioPull = worldLineEnergy; // 0..1 bass average from handleAudioFrame
+  // Slow, stable drift from the clock (different every second, no randoms)
+  const wobble = Math.sin(t / 1.6180339887) * 0.0015 + Math.sin(t / 2.7182818284) * 0.0008;
+  const delta = audioPull * 0.004 + wobble;
+  const shifted = Math.min(1, Math.max(0.9, parseFloat(defaultConvergence) + delta));
+  return shifted.toFixed(6);
+}
+
+// One world-line shift cycle: brief scramble, roll to a real shift reading,
+// hold it, then converge back to the attractor. Cooldown prevents heavy bass
+// from restarting the cycle every frame.
+function triggerNixieFlicker() {
+  const now = performance.now();
+  if (now - lastNixieShift < 1500) return;
+  lastNixieShift = now;
+
+  if (nixieTimer) { clearTimeout(nixieTimer); nixieTimer = null; }
+
+  // Phase 1 — instability: rapid scramble
+  let scramble = "";
+  for (let i = 0; i < 7; i++) scramble += Math.floor(Math.random() * 10);
+  setNixieDigits(scramble[0] + "." + scramble.substring(1));
+
+  // Phase 2 — roll to a shift reading driven by audio + clock
+  nixieTimer = setTimeout(() => {
+    rollNixieTo(computeShiftedConvergence());
+    // Phase 3 — converge back to the attractor
+    nixieTimer = setTimeout(() => {
+      rollNixieTo(defaultConvergence);
+      nixieTimer = null;
+    }, 1100);
+  }, 180);
 }
 
 // --- LIVE NEWS FEED (HACKER NEWS API INTEGRATION) ---
@@ -818,11 +1356,14 @@ function handleAudioFrame(audioArray) {
   // Feed the world line interference map (updates on its own 15fps clock)
   worldLineEnergy = bassVal;
 
-  if (bassVal > 0.65 && nixieFlickerCount === 0) {
-    triggerNixieFlicker();
+  // Feed the Live2D emotion engine so she reacts to the soundtrack in real time
+  if (live2DController && live2DController.setAudioEnergy) {
+    live2DController.setAudioEnergy(bassVal);
   }
 
-  processNixieFlicker();
+  if (bassVal > 0.65) {
+    triggerNixieFlicker();
+  }
 
   // Lip-Sync: Feed average vocals volume (bins 1-12) to Kurisu mouth open parameter
   let vocalsSum = 0;
@@ -859,29 +1400,7 @@ function handleAudioFrame(audioArray) {
   }
 }
 
-// 2. Hardware System Information
-// Called by Lively engine with CPU, GPU, RAM, Net usage.
-// Lively may deliver this as a JSON string (older) or a parsed object (newer) —
-// handle both so telemetry never silently no-ops.
-window.livelySystemInformation = function(data) {
-  isLivelyActive = true;
-  
-  if (!data) return;
-  
-  let obj = data;
-  if (typeof data === 'string') {
-    try {
-      obj = JSON.parse(data);
-    } catch (err) {
-      console.error("AMADEUS Telemetry Parse Error: ", err);
-      return;
-    }
-  }
-  
-  updateTelemetryUI(obj);
-};
-
-// 3. Wallpaper playback pause/resume (--pause-event)
+// 2. Wallpaper playback pause/resume (--pause-event)
 // Lively only pauses rendering; JS keeps running, so we stop our own heavy
 // loops explicitly instead of wasting cycles drawing frames that aren't shown.
 window.livelyWallpaperPlaybackChanged = function(data) {
@@ -902,7 +1421,7 @@ window.livelyWallpaperPlaybackChanged = function(data) {
   }
 };
 
-// 4. Now playing track (--system-nowplaying)
+// 3. Now playing track (--system-nowplaying)
 window.livelyCurrentTrack = function(data) {
   let obj = data;
   if (typeof data === 'string') {
@@ -923,86 +1442,8 @@ window.livelyCurrentTrack = function(data) {
   artistEl.innerText = obj.Artist ? `— ${obj.Artist}` : '';
 };
 
-// Null-safe shorthand so a missing HUD element can never throw in the
-// telemetry path (defensive: Lively may deliver fields out of order).
-const $id = (id) => document.getElementById(id);
-
-function updateTelemetryUI(obj) {
-  // CPU
-  const cpuValue = $id('cpu-value');
-  const cpuBar = $id('cpu-bar');
-  const cpuName = $id('cpu-name');
-  if (obj.CurrentCpu !== undefined) {
-    if (cpuValue) cpuValue.innerText = `${obj.CurrentCpu.toFixed(0)}%`;
-    if (cpuBar) cpuBar.style.width = `${obj.CurrentCpu}%`;
-  }
-  if (obj.NameCpu && cpuName) {
-    cpuName.innerText = obj.NameCpu;
-  }
-
-  // GPU
-  const gpuValue = $id('gpu-value');
-  const gpuBar = $id('gpu-bar');
-  const gpuName = $id('gpu-name');
-  if (obj.CurrentGpu3D !== undefined) {
-    if (gpuValue) gpuValue.innerText = `${obj.CurrentGpu3D.toFixed(0)}%`;
-    if (gpuBar) gpuBar.style.width = `${obj.CurrentGpu3D}%`;
-  }
-  if (obj.NameGpu && gpuName) {
-    gpuName.innerText = obj.NameGpu;
-  }
-
-  // RAM
-  const ramValue = $id('ram-value');
-  const ramBar = $id('ram-bar');
-  if (obj.TotalRam !== undefined && obj.CurrentRamAvail !== undefined) {
-    const totalGB = (obj.TotalRam / 1024).toFixed(1);
-    const usedGB = ((obj.TotalRam - obj.CurrentRamAvail) / 1024).toFixed(1);
-    if (ramValue) ramValue.innerText = `${usedGB} / ${totalGB} GB`;
-    
-    const ramPct = ((obj.TotalRam - obj.CurrentRamAvail) / obj.TotalRam) * 100;
-    if (ramBar) ramBar.style.width = `${ramPct}%`;
-  }
-
-  // Network Rates
-  const netDown = $id('net-down-mb');
-  const netUp = $id('net-up-mb');
-  const netValue = $id('net-value');
-  const netName = $id('net-name');
-  if (obj.CurrentNetDown !== undefined && obj.CurrentNetUp !== undefined) {
-    const netDownMB = (obj.CurrentNetDown / (1024 * 1024)).toFixed(1);
-    const netUpMB = (obj.CurrentNetUp / (1024 * 1024)).toFixed(1);
-    if (netDown) netDown.innerText = netDownMB;
-    if (netUp) netUp.innerText = netUpMB;
-    
-    const downSpeedMb = ((obj.CurrentNetDown * 8) / (1024 * 1024)).toFixed(2);
-    const upSpeedMb = ((obj.CurrentNetUp * 8) / (1024 * 1024)).toFixed(2);
-    if (netValue) netValue.innerText = `↓${downSpeedMb} Mb/s ↑${upSpeedMb} Mb/s`;
-  }
-  if (obj.NameNetCard && netName) {
-    netName.innerText = obj.NameNetCard;
-  }
-}
-
 // --- BROWSER SIMULATION ENGINE (STANDALONE / FALLBACK MODE) ---
 function startBrowserSimulation() {
-  // Simulate Telemetry Updates every 1.5 seconds (only while no real Lively data)
-  setInterval(() => {
-    if (isLivelyActive) return;
-    const simulatedTelemetry = {
-      CurrentCpu: 12 + Math.random() * 25,
-      NameCpu: "AMD Ryzen 9 5900X 12-Core Processor (Simulated)",
-      CurrentGpu3D: 3 + Math.random() * 15,
-      NameGpu: "NVIDIA GeForce RTX 3080 (Simulated)",
-      TotalRam: 32768, // 32 GB
-      CurrentRamAvail: 18000 + (Math.sin(Date.now() / 15000) * 1500),
-      CurrentNetDown: 100000 + Math.random() * 2500000,
-      CurrentNetUp: 20000 + Math.random() * 400000,
-      NameNetCard: "Intel Wi-Fi 6E AX211 160MHz (Simulated)"
-    };
-    updateTelemetryUI(simulatedTelemetry);
-  }, 1.5 * 1000);
-
   // Simulate Audio Data stream for visualizer and mouth lip-sync
   const simulatedFFT = new Float32Array(128);
   

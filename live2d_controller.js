@@ -28,6 +28,7 @@ class Live2DController {
         this._idleTimer = null;
         this._ready = false;
         this._isCubism4 = false;
+        this._emotionHoldUntil = 0; // explicit emotions hold this long before the mood evaluator resumes
 
         // Visual controls (Kurisu Cubism 4 model overrides)
         this.armChangeActive = false;
@@ -127,6 +128,17 @@ class Live2DController {
         this._cursorNX = 1.5; // init far away so she starts neutral
         this._cursorNY = 1.5;
 
+        // Ambient moods: rare, subtle smile/blush moments that fade in/out.
+        this._ambientMood = { type: 'none', value: 0, expireAt: undefined, timer: null };
+
+        // Pause flag set by pause()/resume() so timers can be gated
+        this._paused = false;
+
+        // Stage spotlight tint (updated from proximity, throttled)
+        this._auraEl = null;
+        this._lastAuraP = -1;
+        this._lastAuraColor = '';
+
         // Eyebrow micro-expressions
         this._brows = {
             currentL: 0,               // current left brow offset
@@ -147,6 +159,17 @@ class Live2DController {
         // Idle power-saving mode (set from wallpaper.js when system is silent)
         this._idleMode = false;
         this._idleFrameSkip = 0;
+
+        // Emotion engine — derives a live emotional state from real context
+        // (audio energy, speech, proximity, click surprises, long quiet spells)
+        // so the procedural face/body subsystems have something to respond to.
+        this._audioEnergy = 0;            // bass energy fed by wallpaper.js (0..1)
+        this._lastAudioTime = 0;          // last time real audio was heard
+        this._lastActivityTime = performance.now(); // audio or mouse activity
+        this._surpriseUntil = 0;          // end of current surprised reaction
+        this._lastSurprise = 0;           // cooldown guard for triggerSurprise()
+        this._lastEmotionCheck = 0;       // throttle for the mood evaluator
+        this._lastExpression = undefined; // last expression asset applied
     }
 
     /**
@@ -158,10 +181,143 @@ class Live2DController {
         if (this._idleMode === idle) return;
         this._idleMode = !!idle;
         if (this.app && this.app.ticker) {
+            // speed only slows animation time, not draw frequency — maxFPS
+            // actually caps how often Pixi renders the model while idle.
             this.app.ticker.speed = idle ? 0.2 : 1.0;
+            if (typeof this.app.ticker.maxFPS === 'number') {
+                this.app.ticker.maxFPS = idle ? 10 : 0;
+            }
         }
         if (idle) {
             this._idleFrameSkip = 0;
+        }
+    }
+
+    /**
+     * Feed the current bass/audio energy so the mood engine can react to the
+     * soundtrack in real time (0..1). Called from wallpaper.js per audio frame.
+     */
+    setAudioEnergy(level) {
+        this._audioEnergy = Math.max(0, Math.min(1, level || 0));
+        if (this._audioEnergy > 0.2) {
+            this._lastAudioTime = performance.now();
+            this._lastActivityTime = performance.now();
+        }
+    }
+
+    /**
+     * Brief surprised reaction — world-line shifts, head taps, sharp clicks.
+     * Cooldown prevents click spam from making her perpetually startled.
+     */
+    triggerSurprise() {
+        const now = performance.now();
+        if (now - this._lastSurprise < 2500) return;
+        this._lastSurprise = now;
+        this._surpriseUntil = now + 1500;
+        this.setEmotion('surprised');
+    }
+
+    /**
+     * Set an emotion directly. Writes currentEmotion (which the lifelike
+     * subsystems read every frame) and applies the matching expression asset
+     * only when the face actually changes, so we don't spam expression swaps.
+     *
+     * `holdMs` (optional) pins the emotion for that long so the ambient mood
+     * evaluator doesn't immediately overwrite a chat reaction.
+     */
+    setEmotion(label, holdMs) {
+        const target = (label || 'neutral').toLowerCase();
+        const changed = target !== this.currentEmotion;
+        this.currentEmotion = target;
+        if (holdMs && holdMs > 0) {
+            this._emotionHoldUntil = performance.now() + holdMs;
+        }
+        if (changed) {
+            this._applyExpression(this._expressionForEmotion(target));
+        }
+    }
+
+    _expressionForEmotion(label) {
+        switch (label) {
+            case 'happy':
+            case 'excited':
+                return 'Stanby Smile';
+            case 'amused':
+                return 'Blush 2'; // soft smile + visible blush — playful, not full happy
+            case 'content':
+            case 'calm':
+                return 'Blush 1'; // gentle blush — satisfied but subdued
+            case 'curious':
+            case 'surprised':
+                return 'Stanby Surprised';
+            case 'sad':
+            case 'tired':
+            case 'bitter':
+            case 'sleepy':
+            case 'sleeping':
+                return 'Stanby Sad';
+            case 'angry':
+            case 'annoyed':
+            case 'frustrated':
+            case 'stress':
+                return 'Stanby Angry';
+            case 'scared':
+                return 'Stanby Scared';
+            default:
+                return null; // neutral / calm / thinking — model's default face
+        }
+    }
+
+    _applyExpression(expName) {
+        if (!this._ready || !this.model) return;
+        try {
+            if (expName && typeof this.model.expression === 'function') {
+                this._lastExpression = expName;
+                this.model.expression(expName);
+            } else if (this._lastExpression && typeof this.model.resetExpression === 'function') {
+                this._lastExpression = undefined;
+                this.model.resetExpression();
+            }
+        } catch (e) {
+            // expression assets are optional — never let a missing one break the loop
+        }
+    }
+
+    /**
+     * Lightweight mood evaluator. Runs on a 400ms cadence inside the master
+     * loop and only *overrides* the emotion when there is a real reason to —
+     * otherwise ambient expressions are left alone.
+     */
+    _updateEmotion(now) {
+        if (now - this._lastEmotionCheck < 400) return;
+        this._lastEmotionCheck = now;
+
+        // An explicit emotion (chat reaction, greeting) is being held — don't
+        // override it with ambient mood until the hold expires.
+        if (now < this._emotionHoldUntil) return;
+
+        let label = null;
+
+        if (this._surpriseUntil && now < this._surpriseUntil) {
+            label = 'surprised';
+        } else if (this.isThinking) {
+            label = 'thinking';
+        } else if (this.isSpeaking) {
+            const e = this._audioEnergy || 0;
+            label = e > 0.6 ? 'excited' : (e > 0.25 ? 'happy' : 'content');
+        } else if (this._proximity > 0.55) {
+            label = 'happy'; // she notices you hovering near her face
+        } else {
+            const quiet = now - this._lastActivityTime;
+            if (quiet > 90000) {
+                label = 'tired';
+            } else if (quiet > 20000) {
+                label = 'content'; // relaxed, soft smile while things are calm
+            }
+        }
+
+        if (label && label !== this.currentEmotion) {
+            this.setEmotion(label);
         }
     }
 
@@ -301,6 +457,9 @@ class Live2DController {
             // Start ambient motion system
             this._startAmbientSystem();
 
+            // Start rare ambient moods (soft smile / blush moments)
+            this._startAmbientMoods();
+
             // Start lifelike animation loop
             this._startLifelikeAnimations();
 
@@ -345,12 +504,16 @@ class Live2DController {
 
             // Update all subsystems
             this._updateProximity();
+            this._updateAmbientMood(clampedDt);
             this._updateBlink(timestamp, clampedDt, coreModel);
             this._updateBreathing(clampedDt, coreModel);
             this._updateBodySway(clampedDt, coreModel);
             this._updateHeadSway(clampedDt, coreModel);
             this._updateIdleEyes(timestamp, clampedDt, coreModel);
             this._updateBrows(timestamp, clampedDt, coreModel);
+
+            // Emotion engine (throttled internally to ~2.5Hz)
+            this._updateEmotion(timestamp);
 
             // Apply custom manual overrides (like crossed arms and blushing cheeks)
             this._applyManualOverrides(coreModel);
@@ -369,9 +532,14 @@ class Live2DController {
                 coreModel.setParameterValueById('HandChange', this.armChangeActive ? 1.0 : 0.0);
                 
                 // Blush: sets "ParamCheek" parameter to 0.5 (Mild), 1.0 (Heavy), or 0.0 (None).
-                // Proximity adds a smooth blush when the cursor is close to her face.
+                // Proximity adds a smooth blush when the cursor is close to her face,
+                // and the ambient mood can add a slow blush moment.
                 const cheekVal = this.blushLevel === 1 ? 0.5 : (this.blushLevel === 2 ? 1.0 : 0.0);
-                coreModel.setParameterValueById('ParamCheek', Math.max(cheekVal, this._proximity * 0.7));
+                let cheek = Math.max(cheekVal, this._proximity * 0.7);
+                if (this._ambientMood.type === 'blush') {
+                    cheek = Math.max(cheek, this._ambientMood.value * 0.55);
+                }
+                coreModel.setParameterValueById('ParamCheek', cheek);
 
                 // Mouth Form: sets "ParamMouthForm" to 1.0 (smile), -1.0 (frown), or 0.0 (neutral)
                 const label = this.currentEmotion;
@@ -381,6 +549,11 @@ class Live2DController {
                 let mouthForm = 0.0;
                 if (smileEmotions.includes(label)) mouthForm = 1.0;
                 else if (frownEmotions.includes(label)) mouthForm = -1.0;
+
+                // Ambient mood: a soft, fleeting smile that fades in/out
+                if (this._ambientMood.type === 'smile') {
+                    mouthForm = Math.max(mouthForm, this._ambientMood.value * 0.7);
+                }
                 
                 coreModel.setParameterValueById('ParamMouthForm', mouthForm);
             }
@@ -467,6 +640,72 @@ class Live2DController {
         const dny = (this._cursorNY - 0.5) * 2;
         const dist = Math.sqrt(dnx * dnx + dny * dny);
         this._proximity = Math.max(0, Math.min(1, 1 - dist));
+        this._updateAura();
+    }
+
+    /**
+     * Stage spotlight: cool cyan when alone, warming to rose as the cursor
+     * approaches her face. Throttled so style writes stay sparse.
+     */
+    _updateAura() {
+        if (!this._auraEl) {
+            this._auraEl = document.getElementById('l2d-aura');
+            if (!this._auraEl) return;
+        }
+        const p = this._proximity;
+        if (Math.abs(p - this._lastAuraP) < 0.03) return;
+        this._lastAuraP = p;
+
+        const r = Math.round(126 + (255 - 126) * p);
+        const g = Math.round(211 - (211 - 77) * p);
+        const b = Math.round(250 - (250 - 109) * p);
+        const inner = `rgba(${r}, ${g}, ${b}, ${(0.10 + 0.10 * p).toFixed(3)})`;
+        const mid = `rgba(${r}, ${g}, ${b}, ${(0.05 + 0.05 * p).toFixed(3)})`;
+        const color = inner;
+        if (color !== this._lastAuraColor) {
+            this._lastAuraColor = color;
+            this._auraEl.style.background =
+                `radial-gradient(ellipse 55% 42% at 50% 46%, ${inner} 0%, ${mid} 45%, transparent 75%)`;
+        }
+    }
+
+    /**
+     * Ambient moods: scheduler that occasionally picks a soft smile or blush
+     * moment, faded in/out per-frame via _updateAmbientMood.
+     */
+    _startAmbientMoods() {
+        const schedule = () => {
+            const delay = 18000 + Math.random() * 22000;
+            this._ambientMood.timer = setTimeout(() => {
+                this._ambientMood.timer = null;
+                if (!this._ready || this.isSpeaking || this._paused || this._ambientMood.type !== 'none') {
+                    schedule();
+                    return;
+                }
+                this._ambientMood.type = Math.random() < 0.55 ? 'smile' : 'blush';
+                schedule();
+            }, delay);
+        };
+        schedule();
+    }
+
+    _updateAmbientMood(dt) {
+        const m = this._ambientMood;
+        if (m.type === 'none') {
+            if (m.value > 0.01) m.value = Math.max(0, m.value - dt * 0.004);
+            m.expireAt = undefined;
+            return;
+        }
+        m.value = Math.min(1, m.value + dt * 0.003);
+        if (m.value >= 1) {
+            if (m.expireAt === undefined) {
+                m.expireAt = performance.now() + 3000 + Math.random() * 3500;
+            }
+            if (performance.now() >= m.expireAt) {
+                m.type = 'none';
+                m.expireAt = undefined;
+            }
+        }
     }
 
     /**
@@ -727,6 +966,7 @@ class Live2DController {
         if (hitAreas.includes(headName)) {
             if (isC4) {
                 this.model.motion('TapHead');
+                this.triggerSurprise(); // head taps get a startled face
             } else {
                 const headMotions = ['flick_head', 'pinch_in', 'pinch_out'];
                 const pick = headMotions[Math.floor(Math.random() * headMotions.length)];
@@ -773,11 +1013,25 @@ class Live2DController {
 
     /**
      * Set a random expression from available set.
+     * Only fires while the mood engine is idle (no active emotional override)
+     * and syncs currentEmotion so the procedural face matches the expression.
      */
     _randomExpression() {
         if (!this._ready) return;
+        if (!['neutral', 'calm', 'thinking'].includes(this.currentEmotion)) return;
         const exp = this._allExpressions[Math.floor(Math.random() * this._allExpressions.length)];
         this.model.expression(exp);
+        const sync = {
+            'Stanby Angry': 'angry',
+            'Stanby Sad': 'sad',
+            'Stanby Scared': 'scared',
+            'Stanby Smile': 'happy',
+            'Stanby Surprised': 'surprised',
+        };
+        if (sync[exp]) {
+            this.currentEmotion = sync[exp];
+            this._lastExpression = exp;
+        }
     }
 
     /**
@@ -838,6 +1092,7 @@ class Live2DController {
 
         document.addEventListener('mousemove', (e) => {
             this._mouseActivity.lastMoveTime = performance.now();
+            this._lastActivityTime = performance.now();
             const rect = view.getBoundingClientRect();
             // Always track raw cursor position (even outside the margin) so
             // proximity can fall to 0 when the mouse leaves her area
@@ -877,11 +1132,76 @@ class Live2DController {
             }
         });
 
-        view.addEventListener('pointerdown', (e) => {
+        // --- Drag-to-move (pet mode) + tap-to-interact ---
+        const DRAG_THRESHOLD = 6; // px before a press becomes a drag
+        let dragging = false;
+        let dragMode = 'tap'; // becomes 'drag' once moved past threshold
+        const dragStart = { x: 0, y: 0, modelX: 0, modelY: 0 };
+
+        const canvasToWorld = (cx, cy) => {
             const rect = view.getBoundingClientRect();
-            const x = (e.clientX - rect.left) * (view.width / rect.width);
-            const y = (e.clientY - rect.top) * (view.height / rect.height);
-            this.model.tap(x, y);
+            return {
+                x: (cx - rect.left) * (view.width / rect.width),
+                y: (cy - rect.top) * (view.height / rect.height),
+            };
+        };
+
+        const syncGroundShadow = () => {
+            const shadowEl = document.getElementById('l2d-shadow');
+            if (!shadowEl) return;
+            const pct = Math.min(95, Math.max(5, (this.model.x / view.width) * 100));
+            shadowEl.style.left = pct + '%';
+        };
+
+        view.addEventListener('pointerdown', (e) => {
+            const p = canvasToWorld(e.clientX, e.clientY);
+            dragStart.x = p.x;
+            dragStart.y = p.y;
+            dragStart.modelX = this.model.x;
+            dragStart.modelY = this.model.y;
+            dragging = true;
+            dragMode = 'tap';
+            if (view.setPointerCapture) {
+                try { view.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+            }
+        });
+
+        view.addEventListener('pointermove', (e) => {
+            if (!dragging) return;
+            const p = canvasToWorld(e.clientX, e.clientY);
+            const dx = p.x - dragStart.x;
+            const dy = p.y - dragStart.y;
+            if (dragMode === 'tap' && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+                dragMode = 'drag';
+                this._dragged = true;
+                this.triggerSurprise(); // she notices being picked up
+            }
+            if (dragMode === 'drag') {
+                this.model.x = Math.min(view.width * 0.88, Math.max(view.width * 0.12, dragStart.modelX + dx));
+                this.model.y = Math.min(view.height * 0.98, Math.max(view.height * 0.3, dragStart.modelY + dy));
+                syncGroundShadow();
+                this.app.renderer.render(this.app.stage);
+            }
+        });
+
+        const finishPointer = (e) => {
+            if (!dragging) return;
+            dragging = false;
+            if (dragMode === 'tap') {
+                // A real tap: let the model react to what was hit
+                const p = canvasToWorld(e.clientX, e.clientY);
+                this.model.tap(p.x, p.y);
+            }
+        };
+        view.addEventListener('pointerup', finishPointer);
+        view.addEventListener('pointercancel', finishPointer);
+
+        // Double-click: put her back on center stage
+        view.addEventListener('dblclick', () => {
+            this._dragged = false;
+            this._fitModel();
+            syncGroundShadow();
+            this.triggerSurprise();
         });
     }
 
@@ -893,7 +1213,9 @@ class Live2DController {
 
         if (cw > 0 && ch > 0) {
             this.app.renderer.resize(cw, ch);
-            this._fitModel();
+            if (!this._dragged) {
+                this._fitModel();
+            }
             this.app.renderer.render(this.app.stage);
         }
     }
@@ -902,6 +1224,7 @@ class Live2DController {
      * Pause Pixi ticker when tab is hidden.
      */
     pause() {
+        this._paused = true;
         if (this.app) {
             this.app.stop();
         }
@@ -915,6 +1238,7 @@ class Live2DController {
      * Resume Pixi ticker and resize when tab is shown.
      */
     resume() {
+        this._paused = false;
         if (this.app) {
             this.app.start();
             this.resize();
@@ -934,6 +1258,7 @@ class Live2DController {
     destroy(complete = false) {
         if (this._ambientTimer) clearTimeout(this._ambientTimer);
         if (this._idleTimer) clearTimeout(this._idleTimer);
+        if (this._ambientMood && this._ambientMood.timer) clearTimeout(this._ambientMood.timer);
         if (this._rafHandle) {
             cancelAnimationFrame(this._rafHandle);
             this._rafHandle = null;
