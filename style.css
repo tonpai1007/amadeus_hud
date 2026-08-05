@@ -487,103 +487,76 @@ body.world-line-shifting .glitch-overlay {
   text-overflow: ellipsis;
 }
 
-/* PANEL: Divergence Meter (Top-Right) */
+/* PANEL: AMADEUS Cognitive Core (Top-Right) */
 .top-right-panel {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
   align-self: start;
   width: 380px;
-  border-color: rgba(255, 122, 0, 0.15);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), inset 0 0 12px rgba(255, 122, 0, 0.03);
+  border-color: rgba(126, 211, 250, 0.18);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), inset 0 0 12px rgba(126, 211, 250, 0.04);
 }
 
 .top-right-panel:hover {
-  border-color: rgba(255, 122, 0, 0.45);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(255, 122, 0, 0.08);
+  border-color: rgba(126, 211, 250, 0.45);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(126, 211, 250, 0.09);
 }
 
-/* Nixie Tube Styling */
-.divergence-meter {
+/* Neural-core canvas + inner-thought ticker */
+.amadeus-core {
+  position: relative;
+  border: 1px solid rgba(126, 211, 250, 0.22);
+  border-radius: 4px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(126, 211, 250, 0.10), transparent 70%),
+    rgba(2, 4, 10, 0.6);
+  overflow: hidden;
+}
+
+#amadeus-core-canvas {
+  display: block;
+  width: 100%;
+  height: 130px;
+}
+
+.core-thought {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.72);
-  padding: 10px 14px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 122, 0, 0.2);
-  margin-bottom: 8px;
-  animation: divergence-breathe 5s ease-in-out infinite;
-}
-
-.nixie-digit {
-  display: inline-block;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px dashed rgba(138, 159, 196, 0.2);
   font-family: var(--font-mono);
-  font-size: 30px;
-  font-weight: 700;
-  line-height: 1.1;
-  min-width: 26px;
-  text-align: center;
-  color: var(--nixie-amber);
-  text-shadow:
-    0 0 2px var(--nixie-amber),
-    0 0 8px rgba(255, 122, 0, 0.6),
-    0 0 18px rgba(255, 122, 0, 0.4);
-  background: radial-gradient(circle at 50% 42%, rgba(255, 122, 0, 0.07), rgba(0, 0, 0, 0.4) 72%);
-  border: 1px solid rgba(255, 122, 0, 0.1);
-  border-radius: 3px;
-  box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.85);
-  margin: 0 1px;
-  padding: 2px 0;
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
-.nixie-digit.digit-settle {
-  animation: digit-pop 0.45s ease-out;
-  color: #ffe9b8;
-}
-
-.nixie-dot {
-  font-family: var(--font-mono);
-  font-size: 26px;
-  font-weight: 900;
-  line-height: 1.1;
-  color: var(--nixie-amber);
-  text-shadow:
-    0 0 6px rgba(255, 122, 0, 0.8),
-    0 0 18px rgba(255, 122, 0, 0.5);
-  margin: 0 4px;
-}
-
-@keyframes divergence-breathe {
-  0%, 100% {
-    box-shadow: 0 0 6px rgba(255, 122, 0, 0.12), inset 0 0 8px rgba(255, 122, 0, 0.04);
-  }
-  50% {
-    box-shadow: 0 0 24px rgba(255, 122, 0, 0.32), inset 0 0 16px rgba(255, 122, 0, 0.12);
-  }
-}
-
-@keyframes digit-pop {
-  0% {
-    color: #fff3d6;
-    text-shadow: 0 0 4px #fff, 0 0 20px var(--nixie-amber), 0 0 40px rgba(255, 122, 0, 0.9);
-  }
-  100% {
-    color: var(--nixie-amber);
-    text-shadow:
-      0 0 2px var(--nixie-amber),
-      0 0 8px rgba(255, 122, 0, 0.6),
-      0 0 18px rgba(255, 122, 0, 0.4);
-  }
-}
-
-.field-label {
+.core-thought-label {
   font-family: var(--font-hud);
-  font-size: 9px;
+  font-size: 8px;
+  font-weight: 700;
   color: var(--text-muted);
-  text-align: center;
-  text-transform: uppercase;
-  letter-spacing: 2.5px;
+  letter-spacing: 2px;
+  flex-shrink: 0;
+}
+
+.core-thought-text {
+  color: rgba(126, 211, 250, 0.9);
+  text-shadow: 0 0 6px rgba(126, 211, 250, 0.4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.core-thought-text.core-thought-pop {
+  animation: core-thought-in 0.35s ease-out;
+}
+
+@keyframes core-thought-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* World Line Interference Map (audio-reactive particle constellation) */
@@ -812,7 +785,7 @@ body.idle .center-banner,
 body.idle .pulse-circle,
 body.idle .pulse-text,
 body.idle .status-indicator.online::before,
-body.idle #divergence-meter {
+body.idle .core-thought-text {
   animation-play-state: paused;
 }
 
@@ -822,7 +795,7 @@ body.idle #divergence-meter {
   .pulse-circle,
   .pulse-text,
   .status-indicator.online::before,
-  #divergence-meter,
+  .core-thought-text,
   .news-loading,
   .clock-tube.tube-pop {
     animation: none !important;

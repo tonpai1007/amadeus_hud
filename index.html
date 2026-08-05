@@ -71,23 +71,19 @@
       </div>
     </header>
 
-    <!-- TOP RIGHT: Divergence Meter + World Line Interference Map -->
+    <!-- TOP RIGHT: AMADEUS Cognitive Core + World Line Oscilloscope -->
     <section class="hud-panel top-right-panel" style="width: 380px;">
       <div class="panel-header">
-        <span class="panel-tag">// DIVERGENCE_METER</span>
-        <span class="status-indicator online">WORLD_LINE</span>
+        <span class="panel-tag">// AMADEUS_COGNITIVE_CORE</span>
+        <span class="status-indicator online">NEURAL_SYNC</span>
       </div>
-      <div id="divergence-meter" class="divergence-meter">
-        <span class="nixie-digit">0</span>
-        <span class="nixie-dot">.</span>
-        <span class="nixie-digit">9</span>
-        <span class="nixie-digit">8</span>
-        <span class="nixie-digit">6</span>
-        <span class="nixie-digit">2</span>
-        <span class="nixie-digit">5</span>
-        <span class="nixie-digit">4</span>
+      <div id="amadeus-core" class="amadeus-core">
+        <canvas id="amadeus-core-canvas"></canvas>
+        <div class="core-thought">
+          <span class="core-thought-label">COG_</span>
+          <span class="core-thought-text" id="amadeus-thought-text">AMADEUS_CORE_INITIALIZING</span>
+        </div>
       </div>
-      <div class="field-label">World Line Convergence Attractor</div>
       <div class="world-line-monitor">
         <div class="panel-header">
           <span class="panel-tag">// WORLD_LINE_OSCILLOSCOPE</span>

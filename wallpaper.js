@@ -33,11 +33,8 @@ let isIdle = false;
 let isSleeping = false;
 let isLivelyPaused = false; // set by --pause-event
 
-// Nixie Tube target convergence
+// Attractor constant the world line is pinned to (feeds scope baseline + DELTA readout)
 const defaultConvergence = "0.986254";
-let currentConvergence = defaultConvergence; // live nixie reading (feeds DELTA readout)
-let lastNixieShift = 0;                      // cooldown guard against audio spam
-let nixieTimer = null;                       // shift-cycle timer
 
 // Cursor position (normalized 0..1) for the audio-ring gravitational distortion
 let cursorNX = 0.5;
@@ -58,8 +55,7 @@ window.addEventListener('DOMContentLoaded', () => {
   scheduleIdleChatter();
   initKurisuBubble();
   initKurisuChatInput();
-  startNixieAmbientFlicker();
-  startNixieIntro();
+  initAmadeusCore();
   applyTimeOfDay();
   setInterval(applyTimeOfDay, 60 * 1000);
 
@@ -71,7 +67,7 @@ window.addEventListener('DOMContentLoaded', () => {
     markActivity();
   }, { passive: true });
 
-  // Click anywhere = shift the world line (nixie flicker + HUD glitch)
+  // Click anywhere = shift the world line (Kurisu startle + HUD glitch)
   window.addEventListener('pointerdown', () => {
     if (isLivelyPaused) return;
     triggerWorldLineShift();
@@ -594,21 +590,10 @@ function enterIdleState(idle) {
   }
 }
 
-// Let the divergence meter breathe even when nothing is playing: occasionally
-// roll the digits through a random world-line before settling back.
-function startNixieAmbientFlicker() {
-  setInterval(() => {
-    if (!isIdle) {
-      triggerNixieFlicker();
-    }
-  }, 18000);
-}
-
 // --- CLICK: WORLD LINE SHIFT ---
-// Any click briefly destabilizes the world line: divergence meter flickers and
-// the HUD jitters through a chromatic glitch before snapping back.
+// Any click briefly destabilizes the world line: Kurisu startles and the HUD
+// jitters through a chromatic glitch before snapping back.
 function triggerWorldLineShift() {
-  triggerNixieFlicker();
   if (live2DController && live2DController.triggerSurprise) {
     live2DController.triggerSurprise();
   }
@@ -632,14 +617,25 @@ function applyTimeOfDay() {
 // Replaces the old radar map with a lab oscilloscope: a scrolling graticule
 // plots two live signals — the divergence offset from the attractor (amber)
 // and the current audio energy (cyan) — with a peak-hold marker, live numeric
-// readouts and a scan head. The amber trace is driven by the same signal math
-// as the nixie meter, so the scope genuinely "measures" the world line instead
-// of being decorative noise.
+// readouts and a scan head. The amber trace is driven by real inputs (bass
+// energy + the clock), so the scope genuinely "measures" the world line.
 const SCOPE_SAMPLES = 120;      // ~8s of history at 15fps
 const SCOPE_AMPLITUDE = 0.006;  // divergence scale: ±0.006 fills the scope
 let scopeHistory = [];          // { d: divergence offset, a: audio energy } samples
 let wlCanvas, wlCtx;
 let worldLineEnergy = 0; // fed by handleAudioFrame() from real or simulated bass
+
+// Live divergence offset from the attractor — deterministic at any moment so
+// it "measures" the world line instead of showing arbitrary digits. Silence
+// contributes nothing (reading ≈ attractor); bass pushes it upward, and a slow
+// clock-derived wobble keeps the trace breathing in both directions.
+function currentDivergenceDelta() {
+  const now = new Date();
+  const t = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  const audioPull = worldLineEnergy * 0.004;
+  const wobble = Math.sin(t / 1.6180339887) * 0.0015 + Math.sin(t / 2.7182818284) * 0.0008;
+  return audioPull + wobble;
+}
 
 function initWorldLine() {
   wlCanvas = document.getElementById('world-line-canvas');
@@ -693,10 +689,9 @@ function updateWorldLine() {
   const w = wlCanvas.width;
   const h = wlCanvas.height;
 
-  // Sample the live signal — the same math the nixie meter uses, so the scope
-  // and the tubes agree about where the world line is.
-  const shifted = parseFloat(computeShiftedConvergence()) || parseFloat(defaultConvergence);
-  const delta = shifted - parseFloat(defaultConvergence);
+  // Sample the live signal — same math the DELTA readout uses, so the scope
+  // and the numbers agree about where the world line is.
+  const delta = currentDivergenceDelta();
   const audio = Math.max(0, Math.min(1, worldLineEnergy));
   scopeHistory.push({ d: delta, a: audio });
   if (scopeHistory.length > SCOPE_SAMPLES) scopeHistory.shift();
@@ -788,8 +783,7 @@ function updateWorldLineMeta() {
   // Freeze the readout together with the scope while paused or idle
   if (isLivelyPaused || isIdle) return;
   // DELTA = live divergence offset — matches the scope's amber trace.
-  const shown = parseFloat(computeShiftedConvergence()) || parseFloat(defaultConvergence);
-  const delta = shown - parseFloat(defaultConvergence);
+  const delta = currentDivergenceDelta();
   const sign = delta >= 0 ? '+' : '-';
   deltaEl.innerText = `DELTA ${sign}${Math.abs(delta).toFixed(4)}`;
 }
@@ -1176,97 +1170,230 @@ function drawClockworkBackground(ctx, cx, cy, bass) {
   });
 }
 
-// --- NIXIE CONVERGENCE FLICKER & ROLL EFFECT ---
-// Hard-set every digit instantly (used by the rapid flicker phase). Deliberately
-// does NOT touch currentConvergence — a scramble is pure visual FX and must not
-// leak into the DELTA readout, which only tracks stable rolled readings.
-function setNixieDigits(digitsString) {
-  const digits = digitsString.replace('.', '').split('');
-  document.querySelectorAll('#divergence-meter .nixie-digit').forEach((el, idx) => {
-    if (el._rollRaf) cancelAnimationFrame(el._rollRaf);
-    if (digits[idx] !== undefined) {
-      el.innerText = digits[idx];
-    }
-  });
+// --- AMADEUS COGNITIVE CORE VISUALIZER ---
+// A live neural-core renderer for the freed top-right panel space. The network
+// mirrors her emotional state (node/link color), swells with bass energy, and
+// fires periodic "thought ripples" that travel node-to-node. Beneath it, a
+// thought ticker cycles short context-aware inner lines — reacting to typing,
+// proximity, the soundtrack, and the time of day.
+const CORE_FPS = 1000 / 20;
+const CORE_NODE_COUNT = 26;
+const CORE_LINK_DIST = 0.24; // normalized-space link distance threshold
+
+// Emotion -> RGB. Uses the same labels the Live2D emotion engine produces.
+const AMADEUS_EMOTION_COLORS = {
+  content:   [126, 211, 250], // cyan
+  neutral:   [126, 211, 250],
+  calm:      [126, 211, 250],
+  happy:     [126, 224, 150], // green
+  excited:   [126, 224, 150],
+  surprised: [255, 214, 102], // yellow
+  curious:   [255, 214, 102],
+  annoyed:   [255, 122, 0],   // amber
+  angry:     [255, 92, 50],
+  sad:       [96, 140, 255],  // blue
+  thinking:  [179, 136, 255], // violet
+  tired:     [150, 158, 172], // dim slate
+  sleepy:    [128, 136, 150],
+  sleeping:  [128, 136, 150],
+};
+
+// Deterministic per-index noise so the layout stays stable across resizes.
+function coreNoise(seed) {
+  const s = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+  return s - Math.floor(s);
 }
 
-// Roll each changed digit upward through the nixie stack like a real tube,
-// landing exactly on the target value with a brief bright "settle" pop.
-function rollNixieTo(digitsString) {
-  currentConvergence = digitsString;
-  const targets = digitsString.replace('.', '').split('');
-  document.querySelectorAll('#divergence-meter .nixie-digit').forEach((el, idx) => {
-    const target = targets[idx];
-    if (target === undefined) return;
-    const from = Number(el.innerText) || 0;
-    const to = Number(target);
-    if (from === to) return;
-    if (el._rollRaf) cancelAnimationFrame(el._rollRaf);
-    el.classList.remove('digit-settle');
-    let current = from;
-    el._rollRaf = requestAnimationFrame(function step() {
-      current = (current + 1) % 10;
-      el.innerText = String(current);
-      if (current === to) {
-        el.classList.add('digit-settle');
-        setTimeout(() => el.classList.remove('digit-settle'), 450);
-        return;
-      }
-      el._rollRaf = requestAnimationFrame(step);
+let coreCanvas, coreCtx;
+let coreNodes = [];     // { x, y (normalized), flash, seed }
+let coreLinks = [];     // { a, b } node indices
+let coreColor = [...AMADEUS_EMOTION_COLORS.content];
+let coreAudio = 0;      // smoothed audio energy driving node swell
+let coreNow = 0;
+
+// Inner-thought ticker
+const AMADEUS_THOUGHTS = {
+  typing: [
+    "input detected... deciphering keystrokes",
+    "composing response... probability matrix loading",
+    "cross-referencing his message against lab memos",
+    "he's typing again. statistically significant.",
+    "sentence structure logged. ...peculiar.",
+  ],
+  near: [
+    "proximity elevated. pretend not to notice.",
+    "he's close. very close. ...why",
+    "I'm aware you're watching. Obviously.",
+    "unusually near. is he studying the core?",
+  ],
+  audio: [
+    "audio feed... bassline pattern recognized",
+    "decoding soundtrack... beat structure analyzed",
+    "the music is... acceptable, I suppose",
+    "rhythm detected. already charted.",
+    "sound signature logged for future analysis",
+  ],
+  night: [
+    "still night... the world line sleeps",
+    "nocturnal patterns detected. as expected.",
+    "the lab is quiet at this hour",
+    "stars align with the divergence readings. coincidence?",
+  ],
+  idle: [
+    "observing divergence drift...",
+    "monitoring the time loop...",
+    "amadeus core: nominal",
+    "temporal paradox probability: low",
+    "no anomalies detected",
+  ],
+};
+let coreThoughtLast = -1;
+let coreThoughtTextEl = null;
+
+function initAmadeusCore() {
+  coreCanvas = document.getElementById('amadeus-core-canvas');
+  if (!coreCanvas) return;
+  coreCtx = coreCanvas.getContext('2d');
+
+  // Build the network once in normalized coords — resize just rescales.
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  coreNodes = [];
+  for (let i = 0; i < CORE_NODE_COUNT; i++) {
+    const r = Math.sqrt(0.02 + coreNoise(i * 7.31) * 0.9); // blob-packed toward center
+    const a = golden * i + coreNoise(i * 3.17) * 0.6;
+    coreNodes.push({
+      x: 0.5 + Math.cos(a) * 0.40 * r,
+      y: 0.5 + Math.sin(a) * 0.34 * r,
+      flash: 0,
+      seed: i * 12.9898,
     });
-  });
+  }
+  coreLinks = [];
+  for (let i = 0; i < coreNodes.length; i++) {
+    for (let j = i + 1; j < coreNodes.length; j++) {
+      const dx = coreNodes[i].x - coreNodes[j].x;
+      const dy = coreNodes[i].y - coreNodes[j].y;
+      if (Math.sqrt(dx * dx + dy * dy) < CORE_LINK_DIST) {
+        coreLinks.push({ a: i, b: j });
+      }
+    }
+  }
+
+  function resize() {
+    const rect = coreCanvas.getBoundingClientRect();
+    coreCanvas.width = Math.max(1, Math.round(rect.width * PERF.dpr));
+    coreCanvas.height = Math.max(1, Math.round(rect.height * PERF.dpr));
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  setInterval(updateAmadeusCore, CORE_FPS);
+  setInterval(coreThoughtTick, 8000);
+  coreThoughtTick(); // first thought immediately
+  scheduleCoreThoughtRipple();
 }
 
-// Boot-up sequence: scramble the digits once, then roll them home.
-function startNixieIntro() {
-  let scramble = "";
-  for (let i = 0; i < 7; i++) scramble += Math.floor(Math.random() * 10);
-  scramble = scramble[0] + "." + scramble.substring(1);
-  setNixieDigits(scramble);
-  setTimeout(() => rollNixieTo(defaultConvergence), 120);
+// A stray "thought" ignites a random node and flashes its neighbors.
+function scheduleCoreThoughtRipple() {
+  setTimeout(() => {
+    if (!isLivelyPaused && !isIdle && coreNodes.length) {
+      const start = Math.floor(Math.random() * coreNodes.length);
+      coreNodes[start].flash = 1;
+      for (const link of coreLinks) {
+        if (link.a === start) coreNodes[link.b].flash = Math.max(coreNodes[link.b].flash, 0.5);
+        if (link.b === start) coreNodes[link.a].flash = Math.max(coreNodes[link.a].flash, 0.5);
+      }
+    }
+    scheduleCoreThoughtRipple();
+  }, 3000 + Math.random() * 5000);
 }
 
-// The shift reading is derived from real inputs — live bass energy plus the
-// current clock — so the value is deterministic at any moment and actually
-// "measures" the world line instead of showing arbitrary digits.
-function computeShiftedConvergence() {
-  const now = new Date();
-  const t = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-  // Audio pull: silence contributes nothing (reading ≈ attractor), bass pushes
-  // the divergence upward. The clock wobble below keeps the trace breathing in
-  // both directions around the baseline even with no sound playing.
-  const audioPull = worldLineEnergy * 0.004;
-  // Slow, stable drift from the clock (different every second, no randoms)
-  const wobble = Math.sin(t / 1.6180339887) * 0.0015 + Math.sin(t / 2.7182818284) * 0.0008;
-  const delta = audioPull + wobble;
-  const shifted = Math.min(1, Math.max(0.9, parseFloat(defaultConvergence) + delta));
-  return shifted.toFixed(6);
+function updateAmadeusCore() {
+  if (!coreCtx || !coreCanvas) return;
+  // Freeze the frame while paused or idle, matching the scope behavior.
+  if (isLivelyPaused || isIdle) return;
+
+  coreNow = performance.now();
+
+  // Smooth bass so the network swells instead of strobing.
+  const targetAudio = Math.max(0, Math.min(1, worldLineEnergy));
+  coreAudio += (targetAudio - coreAudio) * 0.2;
+
+  // Blend toward her current emotional color.
+  const emotion = (live2DController && live2DController.currentEmotion) || 'content';
+  const targetColor = AMADEUS_EMOTION_COLORS[emotion] || AMADEUS_EMOTION_COLORS.content;
+  for (let c = 0; c < 3; c++) {
+    coreColor[c] += (targetColor[c] - coreColor[c]) * 0.06;
+  }
+
+  // Decay thought-ripple flashes.
+  for (const node of coreNodes) node.flash *= 0.90;
+
+  const w = coreCanvas.width;
+  const h = coreCanvas.height;
+  const t = coreNow * 0.001;
+  const [cr, cg, cb] = coreColor;
+
+  coreCtx.clearRect(0, 0, w, h);
+
+  // Links — alpha lifts with audio and flashes, brightest on active nodes.
+  for (const link of coreLinks) {
+    const na = coreNodes[link.a];
+    const nb = coreNodes[link.b];
+    const act = Math.max(na.flash, nb.flash);
+    coreCtx.beginPath();
+    coreCtx.moveTo(na.x * w, na.y * h);
+    coreCtx.lineTo(nb.x * w, nb.y * h);
+    coreCtx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${(0.05 + coreAudio * 0.10 + act * 0.35).toFixed(3)})`;
+    coreCtx.lineWidth = act > 0.2 ? 1.4 : 0.8;
+    coreCtx.stroke();
+  }
+
+  // Nodes — radius scales with bass, a gentle shimmer keeps them alive.
+  for (const node of coreNodes) {
+    const shimmer = 0.75 + 0.25 * Math.sin(t * 1.7 + node.seed);
+    const radius = (2 + coreAudio * 3 + node.flash * 2.5) / PERF.dpr;
+    const alpha = (0.35 + coreAudio * 0.4 + node.flash * 0.5) * shimmer;
+    coreCtx.beginPath();
+    coreCtx.arc(node.x * w, node.y * h, radius, 0, Math.PI * 2);
+    coreCtx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${alpha.toFixed(3)})`;
+    coreCtx.shadowColor = `rgba(${cr}, ${cg}, ${cb}, ${(0.5 + node.flash * 0.5).toFixed(3)})`;
+    coreCtx.shadowBlur = node.flash > 0.3 ? 8 : 4;
+    coreCtx.fill();
+  }
+  coreCtx.shadowBlur = 0;
 }
 
-// One world-line shift cycle: brief scramble, roll to a real shift reading,
-// hold it, then converge back to the attractor. Cooldown prevents heavy bass
-// from restarting the cycle every frame.
-function triggerNixieFlicker() {
-  const now = performance.now();
-  if (now - lastNixieShift < 1500) return;
-  lastNixieShift = now;
+// Which thought pool fits right now — typing/thinking outranks everything,
+// then proximity, then the soundtrack, then the clock.
+function coreThoughtContext() {
+  if (live2DController && (live2DController.isTyping || live2DController.isThinking)) return 'typing';
+  if (live2DController && live2DController._proximity > 0.55) return 'near';
+  if (worldLineEnergy > 0.12) return 'audio';
+  const hour = new Date().getHours();
+  if (hour >= 19 || hour < 6) return 'night';
+  return 'idle';
+}
 
-  if (nixieTimer) { clearTimeout(nixieTimer); nixieTimer = null; }
+function coreThoughtTick() {
+  if (!coreThoughtTextEl) {
+    coreThoughtTextEl = document.getElementById('amadeus-thought-text');
+    if (!coreThoughtTextEl) return;
+  }
+  // Keep the last thought on screen while frozen (idle/paused).
+  if (isLivelyPaused || isIdle) return;
 
-  // Phase 1 — instability: rapid scramble
-  let scramble = "";
-  for (let i = 0; i < 7; i++) scramble += Math.floor(Math.random() * 10);
-  setNixieDigits(scramble[0] + "." + scramble.substring(1));
+  const pool = AMADEUS_THOUGHTS[coreThoughtContext()] || AMADEUS_THOUGHTS.idle;
+  let idx;
+  do {
+    idx = Math.floor(Math.random() * pool.length);
+  } while (idx === coreThoughtLast && pool.length > 1);
+  coreThoughtLast = idx;
 
-  // Phase 2 — roll to a shift reading driven by audio + clock
-  nixieTimer = setTimeout(() => {
-    rollNixieTo(computeShiftedConvergence());
-    // Phase 3 — converge back to the attractor
-    nixieTimer = setTimeout(() => {
-      rollNixieTo(defaultConvergence);
-      nixieTimer = null;
-    }, 1100);
-  }, 180);
+  coreThoughtTextEl.classList.remove('core-thought-pop');
+  void coreThoughtTextEl.offsetWidth; // restart the pop animation
+  coreThoughtTextEl.textContent = pool[idx];
+  coreThoughtTextEl.classList.add('core-thought-pop');
 }
 
 // --- LIVE NEWS FEED (HACKER NEWS API INTEGRATION) ---
@@ -1434,7 +1561,7 @@ function handleAudioFrame(audioArray) {
   // When Lively pauses rendering, skip all visual + lip-sync work
   if (isLivelyPaused) return;
 
-  // Process Nixie tube flicker on massive bass spike
+  // Average bass energy (feeds the scope, the cognitive core, and her emotion)
   let bassSum = 0;
   for (let i = 0; i < 8; i++) {
     bassSum += audioArray[i];
@@ -1447,10 +1574,6 @@ function handleAudioFrame(audioArray) {
   // Feed the Live2D emotion engine so she reacts to the soundtrack in real time
   if (live2DController && live2DController.setAudioEnergy) {
     live2DController.setAudioEnergy(bassVal);
-  }
-
-  if (bassVal > 0.65) {
-    triggerNixieFlicker();
   }
 
   // Lip-Sync: Feed average vocals volume (bins 1-12) to Kurisu mouth open parameter
