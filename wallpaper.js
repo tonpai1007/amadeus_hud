@@ -1232,9 +1232,10 @@ function startNixieIntro() {
 function computeShiftedConvergence() {
   const now = new Date();
   const t = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-  // Centered audio swing: silence reads ≈ the attractor, bass pulls the world
-  // line away in either direction, so the scope trace swings around its baseline.
-  const audioPull = (worldLineEnergy - 0.5) * 0.008;
+  // Audio pull: silence contributes nothing (reading ≈ attractor), bass pushes
+  // the divergence upward. The clock wobble below keeps the trace breathing in
+  // both directions around the baseline even with no sound playing.
+  const audioPull = worldLineEnergy * 0.004;
   // Slow, stable drift from the clock (different every second, no randoms)
   const wobble = Math.sin(t / 1.6180339887) * 0.0015 + Math.sin(t / 2.7182818284) * 0.0008;
   const delta = audioPull + wobble;
