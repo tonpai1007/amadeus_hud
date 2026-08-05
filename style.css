@@ -601,6 +601,11 @@ body.world-line-shifting .glitch-overlay {
   text-shadow: 0 0 6px rgba(255, 122, 0, 0.6);
 }
 
+#wl-mind {
+  color: rgba(179, 136, 255, 0.95);
+  text-shadow: 0 0 6px rgba(179, 136, 255, 0.6);
+}
+
 #wl-attractor {
   color: rgba(255, 122, 0, 0.85);
   text-shadow: 0 0 6px rgba(255, 122, 0, 0.5);

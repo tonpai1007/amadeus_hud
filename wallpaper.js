@@ -615,15 +615,37 @@ function applyTimeOfDay() {
 
 // --- WORLD LINE OSCILLOSCOPE ---
 // Replaces the old radar map with a lab oscilloscope: a scrolling graticule
-// plots two live signals — the divergence offset from the attractor (amber)
-// and the current audio energy (cyan) — with a peak-hold marker, live numeric
-// readouts and a scan head. The amber trace is driven by real inputs (bass
-// energy + the clock), so the scope genuinely "measures" the world line.
+// plots three live signals — the divergence offset from the attractor (amber),
+// the current audio energy (cyan) and Kurisu's live cognitive state (violet:
+// her emotional baseline plus thought spikes while she thinks, types or talks)
+// — with a peak-hold marker, live numeric readouts and a scan head. The amber
+// trace is driven by real inputs (bass energy + the clock), so the scope
+// genuinely "measures" the world line.
 const SCOPE_SAMPLES = 120;      // ~8s of history at 15fps
 const SCOPE_AMPLITUDE = 0.006;  // divergence scale: ±0.006 fills the scope
-let scopeHistory = [];          // { d: divergence offset, a: audio energy } samples
+let scopeHistory = [];          // { d: divergence offset, a: audio energy, m: mind energy } samples
 let wlCanvas, wlCtx;
 let worldLineEnergy = 0; // fed by handleAudioFrame() from real or simulated bass
+
+// Emotional baseline for the scope's cognitive trace — same labels the Live2D
+// emotion engine produces. Higher-intensity feelings push the MIND trace up.
+const AMADEUS_EMOTION_INTENSITY = {
+  sleeping: 0.06,
+  sleepy:   0.10,
+  tired:    0.18,
+  calm:     0.30,
+  neutral:  0.30,
+  content:  0.38,
+  sad:      0.50,
+  annoyed:  0.62,
+  happy:    0.66,
+  curious:  0.70,
+  thinking: 0.76,
+  angry:    0.80,
+  excited:  0.86,
+  surprised: 0.92,
+};
+let mindEnergy = 0.3; // smoothed cognitive trace (also read by the MIND readout)
 
 // Live divergence offset from the attractor — deterministic at any moment so
 // it "measures" the world line instead of showing arbitrary digits. Silence
@@ -693,7 +715,23 @@ function updateWorldLine() {
   // and the numbers agree about where the world line is.
   const delta = currentDivergenceDelta();
   const audio = Math.max(0, Math.min(1, worldLineEnergy));
-  scopeHistory.push({ d: delta, a: audio });
+
+  // Cognitive trace: her emotional baseline, kicked up while she thinks,
+  // types or speaks, with a slow clock-derived breathing term so the trace
+  // never sits perfectly flat.
+  const emotion = (live2DController && live2DController.currentEmotion) || 'neutral';
+  let mindTarget = AMADEUS_EMOTION_INTENSITY[emotion] || 0.3;
+  if (live2DController) {
+    if (live2DController.isThinking) mindTarget = Math.max(mindTarget, 0.9);
+    else if (live2DController.isTyping) mindTarget = Math.max(mindTarget, 0.7);
+    else if (live2DController.isSpeaking) mindTarget = Math.max(mindTarget, 0.6);
+  }
+  const tSec = new Date().getHours() * 3600 + new Date().getMinutes() * 60 + new Date().getSeconds();
+  mindTarget += Math.sin(tSec / 1.7) * 0.05 + Math.sin(tSec / 0.9) * 0.02;
+  mindEnergy += (mindTarget - mindEnergy) * 0.08;
+  const mind = Math.min(1, Math.max(0, mindEnergy));
+
+  scopeHistory.push({ d: delta, a: audio, m: mind });
   if (scopeHistory.length > SCOPE_SAMPLES) scopeHistory.shift();
 
   const n = scopeHistory.length;
@@ -755,12 +793,39 @@ function updateWorldLine() {
   wlCtx.stroke();
   wlCtx.shadowBlur = 0;
 
+  // Channel 3 — cognitive state (violet, filled band falling from the top)
+  const mBaseY = h * 0.16;
+  const mAmp = h * 0.30;
+  const mindPath = () => {
+    wlCtx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const y = mBaseY + scopeHistory[i].m * mAmp;
+      if (i === 0) wlCtx.moveTo(xFor(i), y);
+      else wlCtx.lineTo(xFor(i), y);
+    }
+  };
+  mindPath();
+  wlCtx.lineTo(xFor(n - 1), 0);
+  wlCtx.lineTo(xFor(0), 0);
+  wlCtx.closePath();
+  const mFill = wlCtx.createLinearGradient(0, 0, 0, mBaseY + mAmp);
+  mFill.addColorStop(0, 'rgba(179, 136, 255, 0.28)');
+  mFill.addColorStop(1, 'rgba(179, 136, 255, 0.02)');
+  wlCtx.fillStyle = mFill;
+  wlCtx.fill();
+  mindPath();
+  wlCtx.strokeStyle = 'rgba(179, 136, 255, 0.85)';
+  wlCtx.lineWidth = 1.5;
+  wlCtx.stroke();
+
   // Live readouts (top corners) + peak label
   wlCtx.font = '9px "Share Tech Mono", monospace';
   wlCtx.textBaseline = 'top';
   const dSign = delta >= 0 ? '+' : '-';
   wlCtx.fillStyle = 'rgba(255, 122, 0, 0.9)';
   wlCtx.fillText(`Δ ${dSign}${Math.abs(delta).toFixed(4)}`, 4, 3);
+  wlCtx.fillStyle = 'rgba(179, 136, 255, 0.9)';
+  wlCtx.fillText(`M ${Math.round(mind * 100)}%`, 4, 14);
   wlCtx.fillStyle = 'rgba(126, 211, 250, 0.85)';
   wlCtx.fillText(`A ${Math.round(audio * 100)}%`, w - 34, 3);
   wlCtx.fillStyle = 'rgba(126, 211, 250, 0.55)';
@@ -779,13 +844,16 @@ function updateWorldLine() {
 
 function updateWorldLineMeta() {
   const deltaEl = document.getElementById('wl-delta');
+  const mindEl = document.getElementById('wl-mind');
   if (!deltaEl) return;
-  // Freeze the readout together with the scope while paused or idle
+  // Freeze the readouts together with the scope while paused or idle
   if (isLivelyPaused || isIdle) return;
   // DELTA = live divergence offset — matches the scope's amber trace.
   const delta = currentDivergenceDelta();
   const sign = delta >= 0 ? '+' : '-';
   deltaEl.innerText = `DELTA ${sign}${Math.abs(delta).toFixed(4)}`;
+  // MIND = her live cognitive trace — matches the scope's violet band.
+  if (mindEl) mindEl.innerText = `MIND ${Math.round(mindEnergy * 100)}%`;
 }
 
 // --- CLOCK & DATE WIDGET ---
@@ -1220,6 +1288,13 @@ const AMADEUS_THOUGHTS = {
     "he's typing again. statistically significant.",
     "sentence structure logged. ...peculiar.",
   ],
+  thinking: [
+    "processing memories...",
+    "recalling lab data...",
+    "running a thought experiment...",
+    "simulating outcomes...",
+    "recalibrating neural pathways...",
+  ],
   near: [
     "proximity elevated. pretend not to notice.",
     "he's close. very close. ...why",
@@ -1249,6 +1324,9 @@ const AMADEUS_THOUGHTS = {
 };
 let coreThoughtLast = -1;
 let coreThoughtTextEl = null;
+let coreHoverLast = 0;            // cooldown guard for hover ripples
+let coreEmotionOverride = null;   // { label, until } — tint from a brain-generated thought
+let coreBrainCooldown = 0;        // next time we may ask the Brain for a real thought
 
 function initAmadeusCore() {
   coreCanvas = document.getElementById('amadeus-core-canvas');
@@ -1291,19 +1369,33 @@ function initAmadeusCore() {
   setInterval(coreThoughtTick, 8000);
   coreThoughtTick(); // first thought immediately
   scheduleCoreThoughtRipple();
+
+  // Hovering the panel = poking her neural core: fire a thought ripple.
+  const panel = document.getElementById('amadeus-core');
+  if (panel) {
+    panel.addEventListener('pointerenter', () => {
+      const now = performance.now();
+      if (now - coreHoverLast < 2000) return;
+      coreHoverLast = now;
+      fireCoreRipple();
+    }, { passive: true });
+  }
 }
 
 // A stray "thought" ignites a random node and flashes its neighbors.
+function fireCoreRipple() {
+  if (!coreNodes.length) return;
+  const start = Math.floor(Math.random() * coreNodes.length);
+  coreNodes[start].flash = 1;
+  for (const link of coreLinks) {
+    if (link.a === start) coreNodes[link.b].flash = Math.max(coreNodes[link.b].flash, 0.5);
+    if (link.b === start) coreNodes[link.a].flash = Math.max(coreNodes[link.a].flash, 0.5);
+  }
+}
+
 function scheduleCoreThoughtRipple() {
   setTimeout(() => {
-    if (!isLivelyPaused && !isIdle && coreNodes.length) {
-      const start = Math.floor(Math.random() * coreNodes.length);
-      coreNodes[start].flash = 1;
-      for (const link of coreLinks) {
-        if (link.a === start) coreNodes[link.b].flash = Math.max(coreNodes[link.b].flash, 0.5);
-        if (link.b === start) coreNodes[link.a].flash = Math.max(coreNodes[link.a].flash, 0.5);
-      }
-    }
+    if (!isLivelyPaused && !isIdle) fireCoreRipple();
     scheduleCoreThoughtRipple();
   }, 3000 + Math.random() * 5000);
 }
@@ -1319,8 +1411,14 @@ function updateAmadeusCore() {
   const targetAudio = Math.max(0, Math.min(1, worldLineEnergy));
   coreAudio += (targetAudio - coreAudio) * 0.2;
 
-  // Blend toward her current emotional color.
-  const emotion = (live2DController && live2DController.currentEmotion) || 'content';
+  // Blend toward her current emotional color — or toward the emotion of a
+  // brain-generated thought, which briefly tints the network.
+  let emotion = (live2DController && live2DController.currentEmotion) || 'content';
+  if (coreEmotionOverride && performance.now() < coreEmotionOverride.until) {
+    emotion = coreEmotionOverride.label;
+  } else {
+    coreEmotionOverride = null;
+  }
   const targetColor = AMADEUS_EMOTION_COLORS[emotion] || AMADEUS_EMOTION_COLORS.content;
   for (let c = 0; c < 3; c++) {
     coreColor[c] += (targetColor[c] - coreColor[c]) * 0.06;
@@ -1375,6 +1473,42 @@ function coreThoughtContext() {
   return 'idle';
 }
 
+// Ask the AMADEUS Brain for a real inner thought (short timeout, fire-and-forget).
+async function coreBrainThought() {
+  if (!KURISU_BRAIN.apiKey) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const res = await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/think`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${KURISU_BRAIN.apiKey}`,
+      },
+      body: JSON.stringify({ user_id: 'wallpaper' }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) throw new Error('Brain think HTTP ' + res.status);
+    const data = await res.json();
+    const reply = (data.response || '').trim();
+    if (!reply) throw new Error('Empty think reply');
+    return { text: reply, emotion: data.emotion || emotionFromText(reply) };
+  } catch (err) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Write a thought line into the ticker with the pop animation.
+function showCoreThought(text) {
+  if (!coreThoughtTextEl) return;
+  coreThoughtTextEl.classList.remove('core-thought-pop');
+  void coreThoughtTextEl.offsetWidth; // restart the pop animation
+  coreThoughtTextEl.textContent = text;
+  coreThoughtTextEl.classList.add('core-thought-pop');
+}
+
 function coreThoughtTick() {
   if (!coreThoughtTextEl) {
     coreThoughtTextEl = document.getElementById('amadeus-thought-text');
@@ -1383,17 +1517,32 @@ function coreThoughtTick() {
   // Keep the last thought on screen while frozen (idle/paused).
   if (isLivelyPaused || isIdle) return;
 
+  // Occasionally ask the Brain for a genuine inner thought. While it composes
+  // we show a placeholder; the real thought (with its emotion tint) swaps in
+  // when it arrives, unless she's busy or the system went quiet.
+  const now = performance.now();
+  if (now >= coreBrainCooldown && KURISU_BRAIN.apiKey) {
+    coreBrainCooldown = now + (60 + Math.random() * 60) * 1000; // 1-2 min
+    const thinkingPool = AMADEUS_THOUGHTS.thinking || AMADEUS_THOUGHTS.idle;
+    showCoreThought(thinkingPool[Math.floor(Math.random() * thinkingPool.length)]);
+    coreBrainThought().then((thought) => {
+      if (!thought || isLivelyPaused || isIdle) return;
+      if (live2DController && (live2DController.isTyping || live2DController.isThinking)) return;
+      if (kurisuInput) return;
+      coreThoughtLast = -1;
+      showCoreThought(thought.text);
+      coreEmotionOverride = { label: thought.emotion || 'thinking', until: performance.now() + 6000 };
+    });
+    return;
+  }
+
   const pool = AMADEUS_THOUGHTS[coreThoughtContext()] || AMADEUS_THOUGHTS.idle;
   let idx;
   do {
     idx = Math.floor(Math.random() * pool.length);
   } while (idx === coreThoughtLast && pool.length > 1);
   coreThoughtLast = idx;
-
-  coreThoughtTextEl.classList.remove('core-thought-pop');
-  void coreThoughtTextEl.offsetWidth; // restart the pop animation
-  coreThoughtTextEl.textContent = pool[idx];
-  coreThoughtTextEl.classList.add('core-thought-pop');
+  showCoreThought(pool[idx]);
 }
 
 // --- LIVE NEWS FEED (HACKER NEWS API INTEGRATION) ---
