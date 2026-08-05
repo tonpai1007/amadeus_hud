@@ -628,12 +628,16 @@ function applyTimeOfDay() {
   document.body.classList.toggle('night-mode', night);
 }
 
-// --- WORLD LINE INTERFERENCE MAP ---
-// Lightweight audio-reactive particle constellation that replaces the old
-// TradingView iframe: a network of nodes links up and pulses with sound energy,
-// with an amber attractor core and slow radar sweep.
-const WORLD_LINE_PARTICLES = 42;
-let worldLineParticles = [];
+// --- WORLD LINE OSCILLOSCOPE ---
+// Replaces the old radar map with a lab oscilloscope: a scrolling graticule
+// plots two live signals — the divergence offset from the attractor (amber)
+// and the current audio energy (cyan) — with a peak-hold marker, live numeric
+// readouts and a scan head. The amber trace is driven by the same signal math
+// as the nixie meter, so the scope genuinely "measures" the world line instead
+// of being decorative noise.
+const SCOPE_SAMPLES = 120;      // ~8s of history at 15fps
+const SCOPE_AMPLITUDE = 0.006;  // divergence scale: ±0.006 fills the scope
+let scopeHistory = [];          // { d: divergence offset, a: audio energy } samples
 let wlCanvas, wlCtx;
 let worldLineEnergy = 0; // fed by handleAudioFrame() from real or simulated bass
 
@@ -646,7 +650,7 @@ function initWorldLine() {
     const rect = wlCanvas.getBoundingClientRect();
     wlCanvas.width = Math.max(1, Math.round(rect.width * PERF.dpr));
     wlCanvas.height = Math.max(1, Math.round(rect.height * PERF.dpr));
-    seedWorldLine();
+    scopeHistory = [];
   }
 
   window.addEventListener('resize', resize);
@@ -656,19 +660,29 @@ function initWorldLine() {
   setInterval(updateWorldLineMeta, 500);
 }
 
-function seedWorldLine() {
-  worldLineParticles = [];
-  for (let i = 0; i < WORLD_LINE_PARTICLES; i++) {
-    worldLineParticles.push({
-      x: Math.random(),
-      y: Math.random(),
-      vx: (Math.random() - 0.5) * 0.4,
-      vy: (Math.random() - 0.5) * 0.4,
-      r: 1.1 + Math.random() * 1.9,
-      rose: Math.random() < 0.28,
-      phase: Math.random() * Math.PI * 2
-    });
+function drawScopeGraticule(w, h) {
+  wlCtx.lineWidth = 1;
+  // Fine grid
+  wlCtx.strokeStyle = 'rgba(126, 211, 250, 0.06)';
+  const grid = 18;
+  for (let x = grid; x < w; x += grid) {
+    wlCtx.beginPath();
+    wlCtx.moveTo(x, 0);
+    wlCtx.lineTo(x, h);
+    wlCtx.stroke();
   }
+  for (let y = grid; y < h; y += grid) {
+    wlCtx.beginPath();
+    wlCtx.moveTo(0, y);
+    wlCtx.lineTo(w, y);
+    wlCtx.stroke();
+  }
+  // Divergence zero baseline
+  wlCtx.strokeStyle = 'rgba(255, 122, 0, 0.12)';
+  wlCtx.beginPath();
+  wlCtx.moveTo(0, h / 2);
+  wlCtx.lineTo(w, h / 2);
+  wlCtx.stroke();
 }
 
 function updateWorldLine() {
@@ -678,100 +692,104 @@ function updateWorldLine() {
 
   const w = wlCanvas.width;
   const h = wlCanvas.height;
-  const cx = w / 2;
-  const cy = h / 2;
-  const pulse = worldLineEnergy;
+
+  // Sample the live signal — the same math the nixie meter uses, so the scope
+  // and the tubes agree about where the world line is.
+  const shifted = parseFloat(computeShiftedConvergence()) || parseFloat(defaultConvergence);
+  const delta = shifted - parseFloat(defaultConvergence);
+  const audio = Math.max(0, Math.min(1, worldLineEnergy));
+  scopeHistory.push({ d: delta, a: audio });
+  if (scopeHistory.length > SCOPE_SAMPLES) scopeHistory.shift();
+
+  const n = scopeHistory.length;
+  const xFor = (i) => (i / (SCOPE_SAMPLES - 1)) * w;
 
   wlCtx.clearRect(0, 0, w, h);
+  drawScopeGraticule(w, h);
 
-  // Drift + bass pushes particles outward from the attractor core
-  for (const p of worldLineParticles) {
-    p.x += p.vx / w;
-    p.y += p.vy / h;
-    const dx = (p.x - 0.5) * 2;
-    const dy = (p.y - 0.5) * 2;
-    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-    p.x += (dx / dist) * pulse * 0.02;
-    p.y += (dy / dist) * pulse * 0.02;
-    if (p.x < 0) p.x += 1;
-    if (p.x > 1) p.x -= 1;
-    if (p.y < 0) p.y += 1;
-    if (p.y > 1) p.y -= 1;
-  }
-
-  // Constellations: link nearby nodes, brightness scales with audio
-  const linkMax = (0.27 - pulse * 0.05) * w;
-  const linkMax2 = linkMax * linkMax;
-  for (let i = 0; i < worldLineParticles.length; i++) {
-    const a = worldLineParticles[i];
-    for (let j = i + 1; j < worldLineParticles.length; j++) {
-      const b = worldLineParticles[j];
-      const ddx = (a.x - b.x) * w;
-      const ddy = (a.y - b.y) * h;
-      const d2 = ddx * ddx + ddy * ddy;
-      if (d2 < linkMax2) {
-        const t = 1 - Math.sqrt(d2) / linkMax;
-        wlCtx.strokeStyle = `rgba(126, 211, 250, ${(t * (0.24 + pulse * 0.45)).toFixed(3)})`;
-        wlCtx.lineWidth = 1;
-        wlCtx.beginPath();
-        wlCtx.moveTo(a.x * w, a.y * h);
-        wlCtx.lineTo(b.x * w, b.y * h);
-        wlCtx.stroke();
-      }
+  // Channel 1 — audio energy: filled trace rising from the bottom baseline
+  const baseY = h - 5;
+  const aAmp = h * 0.42;
+  const audioPath = () => {
+    wlCtx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const y = baseY - Math.min(1, scopeHistory[i].a) * aAmp;
+      if (i === 0) wlCtx.moveTo(xFor(i), y);
+      else wlCtx.lineTo(xFor(i), y);
     }
-  }
-
-  // Nodes — soft halo behind a bright core so they stay readable on any bg
-  const t = performance.now() / 1000;
-  for (const p of worldLineParticles) {
-    const x = p.x * w;
-    const y = p.y * h;
-    const twinkle = 0.8 + 0.2 * Math.sin(t * 2 + p.phase);
-    const glow = p.r * (1 + pulse * 2.2);
-    const rgb = p.rose ? '255, 77, 109' : '126, 211, 250';
-    // halo
-    wlCtx.beginPath();
-    wlCtx.fillStyle = `rgba(${rgb}, ${(0.14 * twinkle + pulse * 0.3).toFixed(3)})`;
-    wlCtx.arc(x, y, glow * 2.6, 0, Math.PI * 2);
-    wlCtx.fill();
-    // core
-    wlCtx.beginPath();
-    wlCtx.fillStyle = `rgba(${rgb}, ${(0.85 * twinkle).toFixed(3)})`;
-    wlCtx.arc(x, y, glow, 0, Math.PI * 2);
-    wlCtx.fill();
-  }
-
-  // Amber attractor core + range rings at the center of the world line
-  const coreR = 3 + pulse * 6;
-  for (const rr of [coreR * 2.5, coreR * 4.5]) {
-    wlCtx.beginPath();
-    wlCtx.strokeStyle = `rgba(255, 122, 0, ${(0.14 + pulse * 0.25).toFixed(3)})`;
-    wlCtx.lineWidth = 1;
-    wlCtx.arc(cx, cy, rr, 0, Math.PI * 2);
-    wlCtx.stroke();
-  }
-  wlCtx.beginPath();
-  wlCtx.fillStyle = `rgba(255, 122, 0, ${(0.6 + pulse * 0.4).toFixed(3)})`;
-  wlCtx.arc(cx, cy, coreR, 0, Math.PI * 2);
+  };
+  audioPath();
+  wlCtx.lineTo(xFor(n - 1), baseY);
+  wlCtx.lineTo(xFor(0), baseY);
+  wlCtx.closePath();
+  const aFill = wlCtx.createLinearGradient(0, baseY - aAmp, 0, baseY);
+  aFill.addColorStop(0, 'rgba(126, 211, 250, 0.30)');
+  aFill.addColorStop(1, 'rgba(126, 211, 250, 0.02)');
+  wlCtx.fillStyle = aFill;
   wlCtx.fill();
-
-  // Radar sweep arm
-  const sweep = (performance.now() / 1000) * 0.9;
-  wlCtx.beginPath();
-  wlCtx.moveTo(cx, cy);
-  wlCtx.lineTo(cx + Math.cos(sweep) * w * 0.5, cy + Math.sin(sweep) * w * 0.5);
-  wlCtx.strokeStyle = `rgba(255, 122, 0, ${(0.12 + pulse * 0.3).toFixed(3)})`;
-  wlCtx.lineWidth = 1;
+  audioPath();
+  wlCtx.strokeStyle = 'rgba(126, 211, 250, 0.85)';
+  wlCtx.lineWidth = 1.5;
   wlCtx.stroke();
+
+  // Peak hold marker for the audio channel
+  let peak = 0;
+  for (const s of scopeHistory) if (s.a > peak) peak = s.a;
+  const py = baseY - peak * aAmp;
+  wlCtx.setLineDash([3, 5]);
+  wlCtx.strokeStyle = 'rgba(126, 211, 250, 0.35)';
+  wlCtx.beginPath();
+  wlCtx.moveTo(0, py);
+  wlCtx.lineTo(w, py);
+  wlCtx.stroke();
+  wlCtx.setLineDash([]);
+
+  // Channel 2 — divergence offset from the attractor (amber, centered trace)
+  const midY = h / 2;
+  const dScale = (h / 2 - 8) / SCOPE_AMPLITUDE;
+  wlCtx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const y = midY - scopeHistory[i].d * dScale;
+    if (i === 0) wlCtx.moveTo(xFor(i), y);
+    else wlCtx.lineTo(xFor(i), y);
+  }
+  wlCtx.strokeStyle = 'rgba(255, 122, 0, 0.95)';
+  wlCtx.lineWidth = 1.5;
+  wlCtx.shadowColor = 'rgba(255, 122, 0, 0.7)';
+  wlCtx.shadowBlur = 6;
+  wlCtx.stroke();
+  wlCtx.shadowBlur = 0;
+
+  // Live readouts (top corners) + peak label
+  wlCtx.font = '9px "Share Tech Mono", monospace';
+  wlCtx.textBaseline = 'top';
+  const dSign = delta >= 0 ? '+' : '-';
+  wlCtx.fillStyle = 'rgba(255, 122, 0, 0.9)';
+  wlCtx.fillText(`Δ ${dSign}${Math.abs(delta).toFixed(4)}`, 4, 3);
+  wlCtx.fillStyle = 'rgba(126, 211, 250, 0.85)';
+  wlCtx.fillText(`A ${Math.round(audio * 100)}%`, w - 34, 3);
+  wlCtx.fillStyle = 'rgba(126, 211, 250, 0.55)';
+  wlCtx.fillText(`PK ${Math.round(peak * 100)}%`, w - 34, py + 2);
+
+  // Scan head — bright vertical sweep line at the right edge
+  const sx = w - 1;
+  const scan = wlCtx.createLinearGradient(sx - 14, 0, sx, 0);
+  scan.addColorStop(0, 'rgba(255, 122, 0, 0)');
+  scan.addColorStop(1, 'rgba(255, 122, 0, 0.45)');
+  wlCtx.fillStyle = scan;
+  wlCtx.fillRect(sx - 14, 0, 14, h);
+  wlCtx.fillStyle = 'rgba(255, 122, 0, 0.8)';
+  wlCtx.fillRect(sx, 0, 1, h);
 }
 
 function updateWorldLineMeta() {
   const deltaEl = document.getElementById('wl-delta');
   if (!deltaEl) return;
-  // DELTA = live nixie reading minus the attractor (plus a whisper of audio
-  // jitter) — a real instrument readout instead of random noise.
-  const shown = parseFloat(currentConvergence) || parseFloat(defaultConvergence);
-  const delta = (shown - parseFloat(defaultConvergence)) + worldLineEnergy * 0.002;
+  // Freeze the readout together with the scope while paused or idle
+  if (isLivelyPaused || isIdle) return;
+  // DELTA = live divergence offset — matches the scope's amber trace.
+  const shown = parseFloat(computeShiftedConvergence()) || parseFloat(defaultConvergence);
+  const delta = shown - parseFloat(defaultConvergence);
   const sign = delta >= 0 ? '+' : '-';
   deltaEl.innerText = `DELTA ${sign}${Math.abs(delta).toFixed(4)}`;
 }
@@ -1214,10 +1232,12 @@ function startNixieIntro() {
 function computeShiftedConvergence() {
   const now = new Date();
   const t = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-  const audioPull = worldLineEnergy; // 0..1 bass average from handleAudioFrame
+  // Centered audio swing: silence reads ≈ the attractor, bass pulls the world
+  // line away in either direction, so the scope trace swings around its baseline.
+  const audioPull = (worldLineEnergy - 0.5) * 0.008;
   // Slow, stable drift from the clock (different every second, no randoms)
   const wobble = Math.sin(t / 1.6180339887) * 0.0015 + Math.sin(t / 2.7182818284) * 0.0008;
-  const delta = audioPull * 0.004 + wobble;
+  const delta = audioPull + wobble;
   const shifted = Math.min(1, Math.max(0.9, parseFloat(defaultConvergence) + delta));
   return shifted.toFixed(6);
 }

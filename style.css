@@ -624,8 +624,8 @@ body.world-line-shifting .glitch-overlay {
 }
 
 #wl-delta {
-  color: #7ed3fa;
-  text-shadow: 0 0 6px rgba(126, 211, 250, 0.6);
+  color: rgba(255, 122, 0, 0.95);
+  text-shadow: 0 0 6px rgba(255, 122, 0, 0.6);
 }
 
 #wl-attractor {
