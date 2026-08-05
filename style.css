@@ -362,14 +362,64 @@ body.world-line-shifting .glitch-overlay {
   align-self: start;
 }
 
-#hud-clock {
-  font-family: var(--font-mono);
-  font-size: 42px;
-  font-weight: 700;
-  color: var(--accent-cyan);
-  text-shadow: 0 0 12px rgba(0, 212, 255, 0.45);
-  letter-spacing: 1px;
+/* Nixie Tube Clock (top-left) — matches the divergence meter tubes */
+.nixie-clock {
+  display: flex;
+  align-items: center;
   margin-bottom: 2px;
+}
+
+.clock-tube {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.1;
+  min-width: 26px;
+  text-align: center;
+  color: var(--nixie-amber);
+  text-shadow:
+    0 0 2px var(--nixie-amber),
+    0 0 8px rgba(255, 122, 0, 0.6),
+    0 0 18px rgba(255, 122, 0, 0.4);
+  background: radial-gradient(circle at 50% 42%, rgba(255, 122, 0, 0.07), rgba(0, 0, 0, 0.4) 72%);
+  border: 1px solid rgba(255, 122, 0, 0.1);
+  border-radius: 3px;
+  box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.85);
+  margin: 0 1px;
+  padding: 2px 0;
+}
+
+/* Brief cathode glow when a digit flips to a new value */
+.clock-tube.tube-pop {
+  animation: tube-cathode 0.35s ease-out;
+  color: #ffe9b8;
+}
+
+.clock-sep {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1.1;
+  color: var(--nixie-amber);
+  text-shadow:
+    0 0 6px rgba(255, 122, 0, 0.8),
+    0 0 18px rgba(255, 122, 0, 0.5);
+  margin: 0 4px;
+}
+
+@keyframes tube-cathode {
+  0% {
+    color: #fff3d6;
+    text-shadow: 0 0 4px #fff, 0 0 20px var(--nixie-amber), 0 0 40px rgba(255, 122, 0, 0.9);
+  }
+  100% {
+    color: var(--nixie-amber);
+    text-shadow:
+      0 0 2px var(--nixie-amber),
+      0 0 8px rgba(255, 122, 0, 0.6),
+      0 0 18px rgba(255, 122, 0, 0.4);
+  }
 }
 
 #hud-date {
@@ -773,7 +823,8 @@ body.idle #divergence-meter {
   .pulse-text,
   .status-indicator.online::before,
   #divergence-meter,
-  .news-loading {
+  .news-loading,
+  .clock-tube.tube-pop {
     animation: none !important;
   }
   #hud-container {

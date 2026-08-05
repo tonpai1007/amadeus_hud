@@ -781,6 +781,7 @@ function initClock() {
   const clockEl = document.getElementById('hud-clock');
   const dateEl = document.getElementById('hud-date');
   if (!clockEl || !dateEl) return;
+  const tubes = clockEl.querySelectorAll('.clock-tube');
 
   function update() {
     const now = new Date();
@@ -789,8 +790,21 @@ function initClock() {
     const hrs = String(now.getHours()).padStart(2, '0');
     const mins = String(now.getMinutes()).padStart(2, '0');
     const secs = String(now.getSeconds()).padStart(2, '0');
-    clockEl.innerText = `${hrs}:${mins}:${secs}`;
-    
+
+    // Nixie tubes: only write digits that changed, with a brief cathode pop
+    const time = hrs + mins + secs;
+    tubes.forEach((tube, idx) => {
+      const d = time[idx];
+      if (tube.dataset.digit === d) return;
+      tube.dataset.digit = d;
+      tube.innerText = d;
+      tube.classList.remove('tube-pop');
+      void tube.offsetWidth; // restart the animation
+      tube.classList.add('tube-pop');
+      if (tube._popTimer) clearTimeout(tube._popTimer);
+      tube._popTimer = setTimeout(() => tube.classList.remove('tube-pop'), 400);
+    });
+
     // Date format: YYYY.MM.DD
     const yyyy = now.getFullYear();
     const mm = String(now.getMonth() + 1).padStart(2, '0');

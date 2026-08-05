@@ -48,7 +48,16 @@
         <span class="status-indicator online">SYSTEM_COHERENT</span>
       </div>
       <div class="panel-body">
-        <div id="hud-clock">00:00:00</div>
+        <div id="hud-clock" class="nixie-clock">
+          <span class="clock-tube" data-digit="0">0</span>
+          <span class="clock-tube" data-digit="1">0</span>
+          <span class="clock-sep">:</span>
+          <span class="clock-tube" data-digit="2">0</span>
+          <span class="clock-tube" data-digit="3">0</span>
+          <span class="clock-sep">:</span>
+          <span class="clock-tube" data-digit="4">0</span>
+          <span class="clock-tube" data-digit="5">0</span>
+        </div>
         <div id="hud-date">YYYY.MM.DD</div>
         <div class="system-alerts">
           <span class="alert-item"><span class="bullet"></span> KERNEL: ACTIVE_SYNC</span>
