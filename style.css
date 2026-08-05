@@ -150,6 +150,23 @@ body.night-mode {
   display: none;
 }
 
+/* Thinking placeholder — animated "…" while Kurisu generates a reply */
+.bubble-thinking::after {
+  content: '';
+  display: inline-block;
+  width: 1ch;
+  animation: think-dots 1.2s steps(4, end) infinite;
+  color: var(--accent-cyan);
+}
+
+@keyframes think-dots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+  100% { content: ''; }
+}
+
 @keyframes bubble-in {
   from { opacity: 0; transform: translateY(6px) scale(0.96); }
   to { opacity: 1; transform: translateY(0) scale(1); }

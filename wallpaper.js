@@ -20,6 +20,7 @@ let lastVisualUpdate = 0;
 let lastGearUpdate = 0;
 let staticRingCanvas = null; // pre-rendered static radial grid
 let gearSnapshot = null;     // offscreen snapshot of the rotating gears layer
+let ringBarGradient = null;  // cached radial gradient for the spectrum bars (rebuilt on resize)
 
 // --- IDLE / PAUSE POWER SAVING ---
 // Lively keeps pushing near-zero audio arrays when the system is silent, so we
@@ -50,6 +51,9 @@ window.addEventListener('DOMContentLoaded', () => {
   initLive2D().then(kurisuGreetOnLoad);
   initWorldLine();
   fetchRealtimeNews();
+  // Keep the attractor readout in sync with the configured convergence constant
+  const wlAttrEl = document.getElementById('wl-attractor');
+  if (wlAttrEl) wlAttrEl.innerText = `ATTRACTOR ${defaultConvergence}`;
   startIdleWatchdog();
   scheduleIdleChatter();
   initKurisuBubble();
@@ -96,7 +100,7 @@ window.addEventListener('DOMContentLoaded', () => {
 const KURISU_BRAIN = {
   // Local AMADEUS Brain (set your key in brain-key.js)
   endpoint: 'http://127.0.0.1:8000',
-  timeoutMs: 95000,
+  timeoutMs: 20000,
   apiKey: (typeof window !== 'undefined' && window.KURISU_BRAIN_KEY &&
            window.KURISU_BRAIN_KEY.indexOf('REPLACE') === -1)
       ? window.KURISU_BRAIN_KEY
@@ -170,6 +174,7 @@ let kurisuIdleChatterTimer = null;
 let kurisuInput = '';
 let kurisuGreeted = false;
 let kurisuHintShown = false;
+let kurisuReplying = false; // one chat request in flight at a time
 
 function initKurisuBubble() {
   kurisuBubbleEl = document.getElementById('kurisu-bubble');
@@ -203,7 +208,10 @@ function showKurisuBubble(text, durationMs) {
   positionKurisuBubble();
 
   // Typewriter effect
-  kurisuBubbleTextEl.textContent = '';
+  if (kurisuBubbleTextEl) {
+    kurisuBubbleTextEl.classList.remove('bubble-thinking');
+    kurisuBubbleTextEl.textContent = '';
+  }
   kurisuBubbleCaretEl.classList.remove('hidden');
   let i = 0;
   kurisuTypingTimer = setInterval(() => {
@@ -216,7 +224,24 @@ function showKurisuBubble(text, durationMs) {
     }
   }, 18);
 
-  kurisuBubbleTimer = setTimeout(hideKurisuBubble, durationMs || 8000);
+  // Never cut a long reply off mid-typing: keep the bubble up at least as
+  // long as the typewriter takes, plus a short grace period.
+  const typeMs = text.length * 18;
+  kurisuBubbleTimer = setTimeout(hideKurisuBubble, Math.max(durationMs || 8000, typeMs + 2500));
+}
+
+// "…" placeholder bubble while Kurisu is generating a reply
+function showKurisuThinking() {
+  if (!kurisuBubbleEl) return;
+  clearTimeout(kurisuBubbleTimer);
+  clearInterval(kurisuTypingTimer);
+  if (kurisuBubbleTextEl) {
+    kurisuBubbleTextEl.classList.add('bubble-thinking');
+    kurisuBubbleTextEl.textContent = '';
+  }
+  if (kurisuBubbleCaretEl) kurisuBubbleCaretEl.classList.add('hidden');
+  kurisuBubbleEl.classList.add('visible');
+  positionKurisuBubble();
 }
 
 function hideKurisuBubble() {
@@ -224,7 +249,10 @@ function hideKurisuBubble() {
   clearInterval(kurisuTypingTimer);
   if (kurisuBubbleEl) {
     kurisuBubbleEl.classList.remove('visible');
-    if (kurisuBubbleTextEl) kurisuBubbleTextEl.textContent = '';
+    if (kurisuBubbleTextEl) {
+      kurisuBubbleTextEl.textContent = '';
+      kurisuBubbleTextEl.classList.remove('bubble-thinking');
+    }
   }
 }
 
@@ -328,11 +356,22 @@ function emotionFromText(text) {
 
 async function kurisuSay(userText) {
   if (!kurisuBubbleEl) return;
-  // She mulls it over while the LLM thinks
-  if (live2DController && live2DController.setEmotion) {
-    live2DController.setEmotion('thinking');
+  if (kurisuReplying) return; // ignore Enter spam while a reply is pending
+  kurisuReplying = true;
+
+  // She mulls it over while the LLM thinks — thinking bubble + thoughtful gaze
+  if (live2DController) {
+    live2DController.isThinking = true;
+    if (live2DController.setEmotion) {
+      live2DController.setEmotion('thinking');
+    }
   }
+  showKurisuThinking();
+
   const reply = await askKurisu(userText.trim());
+
+  kurisuReplying = false;
+  if (live2DController) live2DController.isThinking = false;
   showKurisuBubble(reply.text, 8000);
   // ...and reacts to her own words (Brain supplies an explicit emotion tag).
   // Hold the face ~7s so the reaction is visible before ambient mood resumes.
@@ -388,7 +427,7 @@ function kurisuGreetOnLoad() {
 async function kurisuThink() {
   if (!KURISU_BRAIN.apiKey) return null;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60000);
+  const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
     const res = await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/think`, {
       method: 'POST',
@@ -422,12 +461,16 @@ function scheduleIdleChatter() {
 
     if (canSpeak()) {
       // She mulls it over while the thought is generated
-      if (live2DController && live2DController.setEmotion) {
-        live2DController.setEmotion('thinking', 4000);
+      if (live2DController) {
+        live2DController.isThinking = true;
+        if (live2DController.setEmotion) {
+          live2DController.setEmotion('thinking', 4000);
+        }
       }
       let text = null;
       let emotion = 'thinking';
       const thought = await kurisuThink();
+      if (live2DController) live2DController.isThinking = false;
       if (thought) {
         text = thought.text;
         emotion = thought.emotion;
@@ -454,12 +497,14 @@ function initKurisuChatInput() {
       if (kurisuInput.trim()) {
         const msg = kurisuInput.trim();
         kurisuInput = '';
+        if (live2DController) live2DController.isTyping = false;
         kurisuSay(msg);
       }
       return;
     }
     if (e.key === 'Escape') {
       kurisuInput = '';
+      if (live2DController) live2DController.isTyping = false;
       hideKurisuBubble();
       return;
     }
@@ -469,11 +514,13 @@ function initKurisuChatInput() {
     }
     if (e.key.length === 1) {
       kurisuInput += e.key;
+      if (live2DController) live2DController.isTyping = true;
       // "hello" triggers the classic lab greeting without pressing Enter
       if (!kurisuGreeted && /\bhello\b/i.test(kurisuInput)) {
         kurisuGreeted = true;
-        kurisuSay('hello');
         kurisuInput = '';
+        if (live2DController) live2DController.isTyping = false;
+        kurisuSay('hello');
         return;
       }
       if (live2DController && live2DController.setEmotion) {
@@ -808,6 +855,13 @@ function buildStaticRing() {
     sctx.arc(cx, cy, r, 0, Math.PI * 2);
     sctx.stroke();
   }
+
+  // Rebuild the shared spectrum-bar gradient once per resize instead of every frame
+  if (ctx) {
+    ringBarGradient = ctx.createRadialGradient(cx, cy, radius, cx, cy, radius + 110);
+    ringBarGradient.addColorStop(0, 'rgba(230, 0, 38, 0.8)');   // crimson inner
+    ringBarGradient.addColorStop(1, 'rgba(255, 77, 109, 0.9)'); // rose outer
+  }
 }
 
 // Draw Audio Ring spectrum behind Kurisu
@@ -854,10 +908,7 @@ function drawAudioRing(fftData, now) {
   ctx.lineWidth = 2.5;
   ctx.lineCap = 'round';
 
-  const grad = ctx.createRadialGradient(cx, cy, radius, cx, cy, radius + 110);
-  grad.addColorStop(0, 'rgba(230, 0, 38, 0.8)');   // crimson inner
-  grad.addColorStop(1, 'rgba(255, 77, 109, 0.9)'); // rose outer
-  ctx.strokeStyle = grad;
+  ctx.strokeStyle = ringBarGradient || 'rgba(230, 0, 38, 0.8)';
 
   for (let i = 0; i < numBars; i++) {
     // Distribute angles around circle
@@ -1094,9 +1145,10 @@ function drawClockworkBackground(ctx, cx, cy, bass) {
 }
 
 // --- NIXIE CONVERGENCE FLICKER & ROLL EFFECT ---
-// Hard-set every digit instantly (used by the rapid flicker phase).
+// Hard-set every digit instantly (used by the rapid flicker phase). Deliberately
+// does NOT touch currentConvergence — a scramble is pure visual FX and must not
+// leak into the DELTA readout, which only tracks stable rolled readings.
 function setNixieDigits(digitsString) {
-  currentConvergence = digitsString;
   const digits = digitsString.replace('.', '').split('');
   document.querySelectorAll('#divergence-meter .nixie-digit').forEach((el, idx) => {
     if (el._rollRaf) cancelAnimationFrame(el._rollRaf);
@@ -1204,6 +1256,7 @@ function getDomain(url) {
 
 function timeSince(timestamp) {
   const seconds = Math.floor((Date.now() / 1000) - timestamp);
+  if (seconds < 0) return "0s"; // guard against clock skew / future timestamps
   let interval = seconds / 3600;
   if (interval > 1) {
     return Math.floor(interval) + "h";

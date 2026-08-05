@@ -626,9 +626,13 @@ class Live2DController {
             }
         }
 
-        // Apply blink openness to left/right eyes
-        this.setParameter('PARAM_EYE_L_OPEN', 'ParamEyeLOpen', b.value);
-        this.setParameter('PARAM_EYE_R_OPEN', 'ParamEyeROpen', b.value);
+        // Apply blink openness to left/right eyes.
+        // While she's asleep the eyes stay shut — the blink state machine is
+        // bypassed until she wakes and the emotion returns to a wakeful one.
+        const sleeping = this.currentEmotion === 'sleepy' || this.currentEmotion === 'sleeping';
+        const openness = sleeping ? 0 : b.value;
+        this.setParameter('PARAM_EYE_L_OPEN', 'ParamEyeLOpen', openness);
+        this.setParameter('PARAM_EYE_R_OPEN', 'ParamEyeROpen', openness);
     }
 
     /**
@@ -724,7 +728,8 @@ class Live2DController {
         } else if (label === 'angry' || label === 'annoyed' || label === 'frustrated' || label === 'stress') {
             speedMult = 1.5;
             ampMult = 1.6; // deeper/heavier breaths
-        } else if (label === 'sad' || label === 'tired' || label === 'bitter') {
+        } else if (label === 'sad' || label === 'tired' || label === 'bitter' ||
+                   label === 'sleepy' || label === 'sleeping') {
             speedMult = 0.6;
             ampMult = 0.6; // shallow/slow breaths
         }
