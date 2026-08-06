@@ -8,19 +8,31 @@ let isLivelyActive = false; // Flagged when Lively API actually starts sending e
 let simulatedAudioTime = 0;
 
 // --- PERFORMANCE PROFILE ---
-// Caps DPR and draw rates to keep the wallpaper light on CPU/GPU.
-const PERF = {
-  dpr: Math.min(window.devicePixelRatio || 1, 1.5), // cap canvas backing resolution
+// Caps DPR and draw rates to keep the wallpaper light on CPU/GPU. Values are
+// mutable so the perf governor can step quality down under load.
+let PERF = {
+  dpr: Math.min(window.devicePixelRatio || 1, 1.0), // cap canvas backing resolution to save VRAM/RAM
   visualFps: 30,                                    // cap full canvas redraw rate
   gearFps: 10                                       // rotating gears redraw much less often
 };
-const VISUAL_INTERVAL = 1000 / PERF.visualFps;
+// Quality levels the governor steps between. Higher index = more detail.
+const PERF_LEVELS = [
+  { dpr: 0.5,  visualFps: 20, scopeStep: 5, ringBars: 32 },
+  { dpr: 0.75, visualFps: 30, scopeStep: 3, ringBars: 48 },
+  { dpr: 1.0,  visualFps: 40, scopeStep: 2, ringBars: 64 },
+];
+let perfLevel = PERF_LEVELS.length - 1; // start at max quality
+let VISUAL_INTERVAL = 1000 / PERF.visualFps;
 const GEAR_INTERVAL = 1000 / PERF.gearFps;
 let lastVisualUpdate = 0;
 let lastGearUpdate = 0;
 let staticRingCanvas = null; // pre-rendered static radial grid
 let gearSnapshot = null;     // offscreen snapshot of the rotating gears layer
 let ringBarGradient = null;  // cached radial gradient for the spectrum bars (rebuilt on resize)
+
+// Resize callbacks the governor calls when it changes DPR.
+let audioResize = null;
+let wlResize = null;
 
 // --- IDLE / PAUSE POWER SAVING ---
 // Lively keeps pushing near-zero audio arrays when the system is silent, so we
@@ -32,9 +44,6 @@ let lastActivityTime = performance.now();
 let isIdle = false;
 let isSleeping = false;
 let isLivelyPaused = false; // set by --pause-event
-
-// Attractor constant the world line is pinned to (feeds scope baseline + DELTA readout)
-const defaultConvergence = "0.986254";
 
 // Cursor position (normalized 0..1) for the audio-ring gravitational distortion
 let cursorNX = 0.5;
@@ -48,14 +57,19 @@ window.addEventListener('DOMContentLoaded', () => {
   initLive2D().then(kurisuGreetOnLoad);
   initWorldLine();
   fetchRealtimeNews();
-  // Keep the attractor readout in sync with the configured convergence constant
-  const wlAttrEl = document.getElementById('wl-attractor');
-  if (wlAttrEl) wlAttrEl.innerText = `ATTRACTOR ${defaultConvergence}`;
   startIdleWatchdog();
   scheduleIdleChatter();
   initKurisuBubble();
   initKurisuChatInput();
-  initAmadeusCore();
+  loadKurisuHistory();
+  loadChatLog();
+  renderChatLog();
+  checkBrainUplink();
+  updateEmotionTint();
+  setInterval(updateEmotionTint, 150);
+  initSettings();
+  initPetMode();
+  startPerfGovernor();
   applyTimeOfDay();
   setInterval(applyTimeOfDay, 60 * 1000);
 
@@ -87,6 +101,232 @@ window.addEventListener('DOMContentLoaded', () => {
   }, 2500);
 });
 
+// --- PET MODE TOGGLE ---
+// Turns Kurisu into a smaller desktop pet you can drag anywhere on stage.
+// The controller already ships the drag/drop machinery â€” here we expose it,
+// persist the spot across reloads, and keep the HUD button in sync.
+const PET_MODE_KEY = 'amadeus.petMode';
+const PET_POS_KEY = 'amadeus.petPos';
+// Exposed so the settings panel can drive the same toggle as the HUD button.
+let petApply = null;
+
+function initPetMode() {
+  const toggle = document.getElementById('pet-toggle');
+  const stateEl = document.getElementById('pet-toggle-state');
+
+  const updateUI = () => {
+    const on = !!(live2DController && live2DController._petMode);
+    document.body.classList.toggle('pet-mode', on);
+    if (toggle) toggle.classList.toggle('active', on);
+    if (stateEl) stateEl.innerText = on ? 'ON' : 'OFF';
+  };
+
+  const apply = (on) => {
+    if (!live2DController || !live2DController.setPetMode) return;
+    if (on) {
+      let nx = 0.82, ny = 0.86; // default: bottom-right, clear of the HUD
+      try {
+        const saved = JSON.parse(localStorage.getItem(PET_POS_KEY) || 'null');
+        if (saved && typeof saved.nx === 'number') {
+          nx = saved.nx;
+          ny = saved.ny;
+        }
+      } catch (e) { /* corrupt save â€” fall back to default */ }
+      live2DController.setPetMode(true);
+      live2DController.setPetPosition(nx, ny);
+    } else {
+      live2DController.setPetMode(false);
+    }
+    try { localStorage.setItem(PET_MODE_KEY, on ? '1' : '0'); } catch (e) { /* ignore */ }
+    updateUI();
+    if (SETTINGS) SETTINGS.pet = on;
+  };
+  petApply = apply;
+
+  if (toggle) {
+    // Don't let clicking the toggle trigger the world-line shift.
+    toggle.addEventListener('pointerdown', (e) => e.stopPropagation());
+    toggle.addEventListener('click', () => {
+      apply(!(live2DController && live2DController._petMode));
+    });
+  }
+
+  // Persist where she lands after a drag.
+  if (live2DController) {
+    live2DController.onPetMoved = () => {
+      const model = live2DController.model;
+      const view = live2DController.app && live2DController.app.view;
+      if (!model || !view || !view.width) return;
+      try {
+        localStorage.setItem(PET_POS_KEY, JSON.stringify({
+          nx: model.x / view.width,
+          ny: model.y / view.height,
+        }));
+      } catch (e) { /* ignore */ }
+    };
+  }
+
+  // Restore the saved state on load.
+  if (localStorage.getItem(PET_MODE_KEY) === '1') apply(true);
+  updateUI();
+}
+
+// --- SETTINGS PANEL ---
+// Persisted widget visibility + oscilloscope tuning, all optional.
+const SETTINGS_KEY = 'amadeus.settings';
+const SETTINGS_DEFAULTS = {
+  widgets: { scope: true, news: true, clock: true, ring: true, crt: true },
+   scope: { speed: 5, density: 5, ch1: '#ff4d55', ch2: '#b388ff' },
+  pet: false,
+};
+let SETTINGS = null;
+
+function loadSettings() {
+  const base = JSON.parse(JSON.stringify(SETTINGS_DEFAULTS));
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    if (saved) {
+      base.widgets = Object.assign(base.widgets, saved.widgets || {});
+      base.scope = Object.assign(base.scope, saved.scope || {});
+      if (typeof saved.pet === 'boolean') base.pet = saved.pet;
+    }
+  } catch (e) { /* corrupt save â€” keep defaults */ }
+  return base;
+}
+
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS)); } catch (e) { /* ignore */ }
+}
+
+// Convert #rrggbb to {r,g,b} or null.
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+function initSettings() {
+  SETTINGS = loadSettings();
+
+  const toggleBody = (el) => {
+    const body = document.getElementById('settings-body');
+    const state = document.getElementById('settings-state');
+    if (!body) return;
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : 'block';
+    if (state) state.innerText = open ? 'OPEN' : 'CLOSE';
+  };
+  const header = document.getElementById('settings-toggle');
+  const panel = document.getElementById('settings-panel');
+  if (panel) panel.addEventListener('pointerdown', (e) => e.stopPropagation());
+  if (header) header.addEventListener('pointerdown', (e) => e.stopPropagation());
+  if (header) header.addEventListener('click', toggleBody);
+
+  // Widget visibility checkboxes
+  document.querySelectorAll('#settings-body input[data-widget]').forEach((input) => {
+    const id = input.dataset.widget;
+    input.checked = SETTINGS.widgets[id] !== false;
+    document.body.classList.toggle('hide-' + id, !input.checked);
+    input.addEventListener('change', () => {
+      SETTINGS.widgets[id] = input.checked;
+      document.body.classList.toggle('hide-' + id, !input.checked);
+      saveSettings();
+    });
+  });
+
+  // PET_MODE via the same state machine as the HUD button
+  const petCheck = document.getElementById('setting-pet');
+  if (petCheck) {
+    petCheck.checked = SETTINGS.pet || localStorage.getItem(PET_MODE_KEY) === '1';
+    petCheck.addEventListener('change', () => {
+      if (petApply) petApply(petCheck.checked);
+    });
+  }
+
+  // Oscilloscope tuning
+  const syncScope = () => {
+    const speedEl = document.getElementById('scope-speed');
+    const densityEl = document.getElementById('scope-density');
+    const ch1El = document.getElementById('scope-ch1');
+    const ch2El = document.getElementById('scope-ch2');
+    if (speedEl) SETTINGS.scope.speed = parseInt(speedEl.value, 10) || 5;
+    if (densityEl) SETTINGS.scope.density = parseInt(densityEl.value, 10) || 5;
+    if (ch1El) SETTINGS.scope.ch1 = ch1El.value;
+    if (ch2El) SETTINGS.scope.ch2 = ch2El.value;
+    saveSettings();
+  };
+  ['scope-speed', 'scope-density', 'scope-ch1', 'scope-ch2'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (id === 'scope-speed') el.value = SETTINGS.scope.speed;
+    if (id === 'scope-density') el.value = SETTINGS.scope.density;
+    if (id === 'scope-ch1') el.value = SETTINGS.scope.ch1;
+    if (id === 'scope-ch2') el.value = SETTINGS.scope.ch2;
+    el.addEventListener('input', syncScope);
+  });
+}
+
+// --- PERF GOVERNOR ---
+// A lightweight rAF probe measures real frame rate and steps the quality level
+// (DPR, visual FPS, scope sample density, ring bar count) down when the system
+// is struggling and back up when there's headroom. High-DPI displays and
+// preview windows that saturate a weak GPU drop automatically.
+let _rafFrames = 0;
+let _rafLast = performance.now();
+let _highStreak = 0;
+let _governorActive = false;
+
+function applyPerfLevel() {
+   const lvl = PERF_LEVELS[perfLevel];
+   PERF.dpr = lvl.dpr;
+   PERF.visualFps = lvl.visualFps;
+   VISUAL_INTERVAL = 1000 / PERF.visualFps;
+   if (audioResize) audioResize();
+   if (wlResize) wlResize();
+   // Inform the Live2D controller so it can adjust physics, ticker speed, and texture LOD
+   if (live2DController && live2DController.setPerfLevel) {
+     live2DController.setPerfLevel(perfLevel);
+   }
+}
+
+function startPerfGovernor() {
+  if (_governorActive) return;
+  _governorActive = true;
+  const probe = () => {
+    if (isLivelyPaused || isIdle) {
+      _rafFrames = 0;
+      _rafLast = performance.now();
+      requestAnimationFrame(probe);
+      return;
+    }
+    _rafFrames++;
+    const now = performance.now();
+    const dt = now - _rafLast;
+    if (dt >= 1500) {
+      const fps = Math.round((_rafFrames * 1000) / dt);
+      _rafFrames = 0;
+      _rafLast = now;
+      if (fps < 18 && perfLevel > 0) {
+        perfLevel--;
+        _highStreak = 0;
+        applyPerfLevel();
+      } else if (fps >= 55) {
+        _highStreak++;
+        if (_highStreak >= 3 && perfLevel < PERF_LEVELS.length - 1) {
+          perfLevel++;
+          _highStreak = 0;
+          applyPerfLevel();
+        }
+      } else {
+        _highStreak = 0;
+      }
+    }
+    requestAnimationFrame(probe);
+  };
+  requestAnimationFrame(probe);
+}
+
 // --- KURISU CHAT (type to talk) ---
 // Kurisu's brain tries, in order: AMADEUS Brain (local FastAPI, memory +
 // emotion) -> OpenRouter (fast cloud, no local CPU/GPU load) if a key is
@@ -96,7 +336,10 @@ window.addEventListener('DOMContentLoaded', () => {
 const KURISU_BRAIN = {
   // Local AMADEUS Brain (set your key in brain-key.js)
   endpoint: 'http://127.0.0.1:8000',
-  timeoutMs: 20000,
+  // Long enough to cover the brain's ~30s cold-start warmup (mem0/spaCy) after
+  // a fresh boot. A brain that is DOWN fails fast (connection refused), so this
+  // only delays the "up but still warming" case.
+  timeoutMs: 45000,
   apiKey: (typeof window !== 'undefined' && window.KURISU_BRAIN_KEY &&
            window.KURISU_BRAIN_KEY.indexOf('REPLACE') === -1)
       ? window.KURISU_BRAIN_KEY
@@ -112,10 +355,13 @@ const KURISU_LLM = {
            window.KURISU_OPENROUTER_KEY.indexOf('REPLACE') === -1)
       ? window.KURISU_OPENROUTER_KEY
       : '',
-  // Local fallback: Ollama (free, offline)
+  // Local fallback: Ollama (free, offline). DISABLED by default - the AMADEUS
+  // Brain already covers chat, and Ollama keeps its model loaded in RAM even
+  // when idle. Set useOllama: true to re-enable it as a backup tier.
   fallbackEndpoint: 'http://localhost:11434',
   fallbackModel: 'qwen3:4b',
   fallbackTimeoutMs: 6000,
+  useOllama: false,
 };
 
 const KURISU_SYSTEM_PROMPT =
@@ -138,7 +384,255 @@ const KURISU_CANNED = [
   "El Psy Kongroo. ...Yes, I said it. Happy now?",
 ];
 
-// Ambient chatter — occasionally she mutters something unprompted while you're
+// --- CONVERSATION MEMORY ---
+// Rolling recent-chat history fed to every brain tier so Kurisu can recall
+// earlier topics across reloads. In-memory (a few dozen strings) plus a tiny
+// localStorage mirror - no meaningful CPU/GPU cost.
+const KURISU_HISTORY_KEY = 'amadeus.kurisuHistory';
+const KURISU_HISTORY_MAX = 12; // most recent turns kept (1 turn = user + assistant)
+let kurisuHistory = [];
+
+function loadKurisuHistory() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(KURISU_HISTORY_KEY) || '[]');
+    if (Array.isArray(arr)) {
+      kurisuHistory = arr.slice(-KURISU_HISTORY_MAX * 2);
+    }
+  } catch (e) { kurisuHistory = []; }
+}
+
+function saveKurisuHistory() {
+  try {
+    localStorage.setItem(KURISU_HISTORY_KEY,
+      JSON.stringify(kurisuHistory.slice(-KURISU_HISTORY_MAX * 2)));
+  } catch (e) { /* ignore */ }
+}
+
+// --- CHAT TRANSCRIPT (visible log, separate from the API context history) ---
+// kurisuHistory feeds the brain tiers (role/content only); chatLog is the
+// on-screen transcript that also records WHICH tier answered, so you can see
+// at a glance whether the AMADEUS Brain replied or the canned fallback fired.
+const CHAT_LOG_KEY = 'amadeus.chatLog';
+const CHAT_LOG_MAX = 40; // most recent entries kept on screen + persisted
+let chatLog = [];
+let chatLogEl = null;
+let kurisuInputEl = null;
+let chatUplinkEl = null;
+
+function loadChatLog() {
+  chatLogEl = document.getElementById('chat-log');
+  kurisuInputEl = document.getElementById('kurisu-input');
+  chatUplinkEl = document.getElementById('chat-uplink');
+  try {
+    const arr = JSON.parse(localStorage.getItem(CHAT_LOG_KEY) || '[]');
+    if (Array.isArray(arr)) chatLog = arr.slice(-CHAT_LOG_MAX);
+  } catch (e) { chatLog = []; }
+}
+
+function saveChatLog() {
+  try {
+    localStorage.setItem(CHAT_LOG_KEY, JSON.stringify(chatLog.slice(-CHAT_LOG_MAX)));
+  } catch (e) { /* ignore */ }
+}
+
+function appendChatEntry(role, content, source) {
+  chatLog.push({ role, content, source: source || 'history', ts: Date.now() });
+  if (chatLog.length > CHAT_LOG_MAX) chatLog = chatLog.slice(-CHAT_LOG_MAX);
+  saveChatLog();
+  renderChatLog();
+}
+
+// Transient "…" thinking row shown while Kurisu is generating a reply. It is
+// NOT persisted to chatLog - clearChatPending() swaps it for the real answer.
+let chatPendingEl = null;
+
+function showChatPending() {
+  if (!chatLogEl) return;
+  clearChatPending();
+  const row = document.createElement('div');
+  row.className = 'chat-entry assistant';
+  const meta = document.createElement('span');
+  meta.className = 'chat-meta';
+  meta.textContent = 'KURISU ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const body = document.createElement('span');
+  body.className = 'chat-body pending';
+  body.textContent = '...';
+  row.appendChild(meta);
+  row.appendChild(body);
+  chatLogEl.appendChild(row);
+  chatPendingEl = row;
+  chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+
+function clearChatPending() {
+  if (chatPendingEl && chatPendingEl.parentNode) {
+    chatPendingEl.parentNode.removeChild(chatPendingEl);
+  }
+  chatPendingEl = null;
+}
+
+// Render the full transcript. Source badges make the answer tier visible.
+function renderChatLog() {
+  if (!chatLogEl) return;
+  const frag = document.createDocumentFragment();
+  chatLog.forEach((entry) => {
+    const row = document.createElement('div');
+    row.className = 'chat-entry ' + (entry.role === 'user' ? 'user' : 'assistant');
+
+    const meta = document.createElement('span');
+    meta.className = 'chat-meta';
+    const who = entry.role === 'user' ? 'YOU' : 'KURISU';
+    const stamp = entry.ts ? new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    if (entry.role === 'assistant') {
+      const badge = document.createElement('span');
+      badge.className = 'chat-source src-' + (entry.source || 'history');
+      badge.textContent = (entry.source || 'history').toUpperCase();
+      meta.appendChild(badge);
+      meta.appendChild(document.createTextNode(' ' + who + ' ' + stamp));
+    } else {
+      meta.textContent = who + ' ' + stamp;
+    }
+
+    const body = document.createElement('span');
+    body.className = 'chat-body';
+    body.textContent = entry.content;
+
+    row.appendChild(meta);
+    row.appendChild(body);
+    frag.appendChild(row);
+  });
+  chatLogEl.innerHTML = '';
+  chatLogEl.appendChild(frag);
+  chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+
+// --- EMOTION-TINTED HUD ---
+// Same moods/palette as the Live2D stage-light (EMOTION_AURA). The panel
+// borders, status lights, pulse text and speech bubble all bleed toward the
+// color of her current emotion, blended smoothly instead of snapping.
+const EMOTION_TINT = {
+  neutral:    { r: 204, g:  50, b:  53, glow: 0.35 },
+  calm:       { r: 255, g: 110, b: 120, glow: 0.30 },
+  content:    { r: 255, g: 170, b: 180, glow: 0.35 },
+  amused:     { r: 255, g: 175, b: 200, glow: 0.45 },
+  smug:       { r: 255, g: 200, b: 120, glow: 0.42 },
+  proud:      { r: 200, g: 160, b: 255, glow: 0.43 },
+  jealous:    { r: 255, g:  60, b: 160, glow: 0.58 },
+  happy:      { r: 255, g: 120, b: 170, glow: 0.45 },
+  excited:    { r: 255, g:  95, b: 150, glow: 0.55 },
+  surprised:  { r: 255, g: 180, b: 200, glow: 0.50 },
+  curious:    { r: 210, g: 125, b: 200, glow: 0.40 },
+  focused:    { r: 200, g: 100, b: 255, glow: 0.35 },
+  confused:   { r: 220, g: 180, b: 240, glow: 0.40 },
+  thinking:   { r: 180, g: 175, b: 255, glow: 0.35 },
+  angry:      { r: 255, g:  65, b:  70, glow: 0.60 },
+  annoyed:    { r: 255, g: 130, b:  75, glow: 0.45 },
+  frustrated: { r: 255, g: 100, b:  65, glow: 0.50 },
+  sad:        { r: 120, g: 130, b: 220, glow: 0.25 },
+  bitter:     { r: 100, g: 120, b: 210, glow: 0.25 },
+  tired:      { r: 180, g: 120, b: 210, glow: 0.28 },
+  sleepy:     { r: 150, g: 100, b: 190, glow: 0.25 },
+  sleeping:   { r: 120, g:  80, b: 175, glow: 0.22 },
+};
+let hudTint = { r: EMOTION_TINT.neutral.r, g: EMOTION_TINT.neutral.g, b: EMOTION_TINT.neutral.b, glow: EMOTION_TINT.neutral.glow };
+
+function updateEmotionTint() {
+  const emo = (live2DController && live2DController.currentEmotion) || 'neutral';
+  const target = EMOTION_TINT[emo] || EMOTION_TINT.neutral;
+  hudTint.r += (target.r - hudTint.r) * 0.08;
+  hudTint.g += (target.g - hudTint.g) * 0.08;
+  hudTint.b += (target.b - hudTint.b) * 0.08;
+  hudTint.glow += (target.glow - hudTint.glow) * 0.08;
+  const r = Math.round(hudTint.r);
+  const g = Math.round(hudTint.g);
+  const b = Math.round(hudTint.b);
+  const glow = hudTint.glow.toFixed(2);
+  // Skip the DOM write when nothing changed by more than a rounding step, so
+  // the tint only churns styles while it is actually moving toward a new mood.
+  if (r === updateEmotionTint._lr && g === updateEmotionTint._lg &&
+      b === updateEmotionTint._lb && glow === updateEmotionTint._lglow) return;
+  updateEmotionTint._lr = r; updateEmotionTint._lg = g;
+  updateEmotionTint._lb = b; updateEmotionTint._lglow = glow;
+  const root = document.documentElement.style;
+  root.setProperty('--hud-emote-r', r);
+  root.setProperty('--hud-emote-g', g);
+  root.setProperty('--hud-emote-b', b);
+  root.setProperty('--hud-emote-glow', glow);
+}
+
+// --- BRAIN UPLINK STATUS ---
+// Probes the local AMADEUS Brain so the chat terminal header shows whether the
+// real brain is answering (BRAIN_LINK) or everything is falling back to canned
+// lines (OFFLINE). Re-probed every 60s.
+function setUplink(state, label) {
+  if (!chatUplinkEl) return;
+  chatUplinkEl.classList.remove('online', 'offline', 'thinking');
+  if (state) chatUplinkEl.classList.add(state);
+  chatUplinkEl.textContent = label;
+}
+
+async function checkBrainUplink() {
+  if (!KURISU_BRAIN.apiKey) {
+    setUplink('offline', 'UPLINK: NO_KEY');
+    return;
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const res = await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/hello`, {
+      headers: { 'Authorization': `Bearer ${KURISU_BRAIN.apiKey}` },
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    setUplink(res.ok ? 'online' : 'offline', res.ok ? 'UPLINK: BRAIN_LINK' : 'UPLINK: OFFLINE');
+  } catch (err) {
+    clearTimeout(timer);
+    setUplink('offline', 'UPLINK: OFFLINE');
+  }
+}
+
+// --- KURISU CHAT: canned fallback, slightly input-aware so the offline pool
+// still feels like she's listening rather than rolling dice. ---
+let lastCannedLine = '';
+function cannedReplyFor(userText) {
+  const t = (userText || '').toLowerCase();
+  if (/\b(hello|hi|hey|good (morning|evening|afternoon))\b/.test(t))
+    return "Hello. You've interrupted a very important calculation. Speak quickly.";
+  if (/\b(who are you|your name|name is)\b/.test(t))
+    return "Makise Kurisu. Eighteen, neuroscience, and yes, I get that a lot.";
+  if (/\b(how are you|how r u|how do you feel)\b/.test(t))
+    return "Statistically fine, considering I'm running on this wallpaper's goodwill.";
+  if (/\b(world line|divergence)\b/.test(t))
+    return "World line 1.048596, unless you've been sending D-Mails behind my back.";
+  if (/\b(d-?mail|time travel|time leap|machine)\b/.test(t))
+    return "The time machine only runs on lab approval. Which you don't have.";
+  if (/\b(okabe|hououin|el psy|kongroo|mad scientist)\b/.test(t))
+    return "Hououin Kyouma? Don't encourage him. He's already insufferable.";
+  if (/\b(daru|itaru)\b/.test(t))
+    return "Daru would probably be able to repair whatever you broke. I'll call him.";
+  if (/\b(thank|thanks|thx)\b/.test(t))
+    return "You're welcome. Try not to make a habit of needing my help.";
+  if (/\b(bye|goodbye|good night|see you)\b/.test(t))
+    return "Leaving already? The lab memos will note your disappearance.";
+  if (/\b(love|like you|date|girlfriend)\b/.test(t))
+    return "I'm a scientist, not your girlfriend. Don't make me repeat myself.";
+  if (/\b(sad|lonely|depress|stress|tired)\b/.test(t))
+    return "That sounds heavy. Even a genius can't fix everything - but I'm listening.";
+  if (/\b(work|study|exam|test|deadline)\b/.test(t))
+    return "Procrastinating by talking to a wallpaper? That tracks, statistically.";
+  if (t.includes('?'))
+    return "Good question. If I had the lab's equipment here I'd give you a precise answer.";
+  // No match: random pool, but avoid repeating the previous canned line.
+  let line = lastCannedLine;
+  let guard = 0;
+  while (line === lastCannedLine && guard++ < 8) {
+    line = KURISU_CANNED[Math.floor(Math.random() * KURISU_CANNED.length)];
+  }
+  lastCannedLine = line;
+  return line;
+}
+
+// Ambient chatter â€” occasionally she mutters something unprompted while you're
 // at the desk, but never while typing or while the system is idle/asleep.
 const KURISU_IDLE_LINES = [
   "The divergence meter's drifting again. You're not messing with it, are you?",
@@ -226,7 +720,7 @@ function showKurisuBubble(text, durationMs) {
   kurisuBubbleTimer = setTimeout(hideKurisuBubble, Math.max(durationMs || 8000, typeMs + 2500));
 }
 
-// "…" placeholder bubble while Kurisu is generating a reply
+// "â€¦" placeholder bubble while Kurisu is generating a reply
 function showKurisuThinking() {
   if (!kurisuBubbleEl) return;
   clearTimeout(kurisuBubbleTimer);
@@ -254,8 +748,11 @@ function hideKurisuBubble() {
 
 // --- Kurisu's brain: AMADEUS Brain first, then OpenRouter, Ollama, canned ---
 async function askKurisu(userText) {
+  // Replay recent turns so every tier has conversation context.
+  const history = kurisuHistory.slice(-KURISU_HISTORY_MAX * 2);
   const messages = [
     { role: 'system', content: KURISU_SYSTEM_PROMPT },
+    ...history,
     { role: 'user', content: userText },
   ];
 
@@ -270,13 +767,13 @@ async function askKurisu(userText) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${KURISU_BRAIN.apiKey}`,
         },
-        body: JSON.stringify({ message: userText, user_id: 'wallpaper', history: [] }),
+        body: JSON.stringify({ message: userText, user_id: 'wallpaper', history }),
         signal: ctrl.signal,
       });
       clearTimeout(timer);
       if (!res.ok) throw new Error('Brain HTTP ' + res.status);
       const data = await res.json();
-      const reply = (data.response || '').trim();
+      const reply = cleanReply(data.response);
       if (!reply) throw new Error('Empty Brain reply');
       return { text: reply, emotion: data.emotion || emotionFromText(reply), source: 'brain' };
     } catch (err) {
@@ -306,8 +803,8 @@ async function askKurisu(userText) {
       clearTimeout(timer);
       if (!res.ok) throw new Error('OpenRouter HTTP ' + res.status);
       const data = await res.json();
-      const reply = (data.choices && data.choices[0] && data.choices[0].message &&
-                     data.choices[0].message.content || '').trim();
+      const reply = cleanReply(data.choices && data.choices[0] && data.choices[0].message &&
+                     data.choices[0].message.content);
       if (!reply) throw new Error('Empty OpenRouter reply');
       return { text: reply, source: 'cloud' };
     } catch (err) {
@@ -315,38 +812,52 @@ async function askKurisu(userText) {
     }
   }
 
-  // 2) Local: Ollama (free, offline) if the server is up
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), KURISU_LLM.fallbackTimeoutMs);
-    const res = await fetch(`${KURISU_LLM.fallbackEndpoint}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: KURISU_LLM.fallbackModel, messages, stream: false }),
-      signal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error('Ollama HTTP ' + res.status);
-    const data = await res.json();
-    const reply = (data && data.message && data.message.content || '').trim();
-    if (!reply) throw new Error('Empty Ollama reply');
-    return { text: reply, source: 'llm' };
-  } catch (err) {
-    console.warn('[Kurisu] Ollama unreachable, using canned reply:', err.message);
+  // 2) Local: Ollama (free, offline) - only if explicitly enabled
+  if (KURISU_LLM.useOllama) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), KURISU_LLM.fallbackTimeoutMs);
+      const res = await fetch(`${KURISU_LLM.fallbackEndpoint}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: KURISU_LLM.fallbackModel, messages, stream: false }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error('Ollama HTTP ' + res.status);
+      const data = await res.json();
+      const reply = cleanReply(data && data.message && data.message.content);
+      if (!reply) throw new Error('Empty Ollama reply');
+      return { text: reply, source: 'llm' };
+    } catch (err) {
+      console.warn('[Kurisu] Ollama unreachable, using canned reply:', err.message);
+    }
   }
 
-  // 3) Canned Steins;Gate-flavored lines
-  return { text: KURISU_CANNED[Math.floor(Math.random() * KURISU_CANNED.length)], source: 'canned' };
+  // 3) Canned Steins;Gate-flavored lines (input-aware, avoids immediate repeats)
+  return { text: cannedReplyFor(userText), source: 'canned' };
+}
+
+// Strip stray LLM noise: parenthetical tags the model leaks (emotion, motion,
+// partial/unclosed ones) plus common leading artifacts like "AI:" or "Kurisu:".
+function cleanReply(text) {
+  let t = String(text || '').trim();
+  t = t.replace(/\(\s*(emotion|motion|pose|action|tell):[^)]*\)/gi, '');
+  t = t.replace(/\((emotion|motion)[^)]*$/i, '');
+  t = t.replace(/^\[[^\]]*\]\s*/gm, '');
+  t = t.replace(/^(AI|Kurisu|Assistant|Amadeus)[\s]*:?\s*/i, '');
+  return t.trim();
 }
 
 // Map her reply's tone onto a Live2D expression
 function emotionFromText(text) {
   const t = text.toLowerCase();
-  if (/\b(wow|amazing|incredible|unbelievable|surpris|wonderful)\b/.test(t)) return 'surprised';
+  if (/\b(wow|amazing|incredible|unbelievable|surpris|wonderful|curious|interesting)\b/.test(t)) return 'surprised';
   if (/\b(sad|sorry|miss|lost|lonely|cry|worry)\b/.test(t)) return 'sad';
-  if (/\b(angry|annoy|idiot|fool|jerk|stupid|baka|nonsense)\b/.test(t)) return 'annoyed';
+  if (/\b(angry|annoy|idiot|fool|jerk|stupid|baka|nonsense|frustrat)\b/.test(t)) return 'annoyed';
   if (/\b(happy|smile|laugh|love|glad|fun|great|fascinating)\b/.test(t)) return 'happy';
-  if (/\b(hmm|maybe|think|science|probability|experiment|theory)\b/.test(t)) return 'thinking';
+  if (/\b(hmm|maybe|think|science|probability|experiment|theory|focus|analy|data)\b/.test(t)) return 'thinking';
+  if (/\b(confus|puzzl|unclear|what\?)\b/.test(t)) return 'confused';
   return 'content';
 }
 
@@ -354,8 +865,14 @@ async function kurisuSay(userText) {
   if (!kurisuBubbleEl) return;
   if (kurisuReplying) return; // ignore Enter spam while a reply is pending
   kurisuReplying = true;
+  const msg = userText.trim();
 
-  // She mulls it over while the LLM thinks — thinking bubble + thoughtful gaze
+  // Your message lands in the transcript immediately, with a "…" pending row
+  // that becomes her real answer once the brain/LLM responds.
+  appendChatEntry('user', msg);
+  showChatPending();
+
+  // She mulls it over while the LLM thinks â€” thinking bubble + thoughtful gaze
   if (live2DController) {
     live2DController.isThinking = true;
     if (live2DController.setEmotion) {
@@ -363,8 +880,27 @@ async function kurisuSay(userText) {
     }
   }
   showKurisuThinking();
+  setUplink('thinking', 'UPLINK: SYNTH');
 
-  const reply = await askKurisu(userText.trim());
+  const reply = await askKurisu(msg);
+
+  // Remember the exchange (capped rolling history) for next time.
+  kurisuHistory.push({ role: 'user', content: msg });
+  kurisuHistory.push({ role: 'assistant', content: reply.text });
+  if (kurisuHistory.length > KURISU_HISTORY_MAX * 2) {
+    kurisuHistory = kurisuHistory.slice(-KURISU_HISTORY_MAX * 2);
+  }
+  saveKurisuHistory();
+
+  // Swap the pending "…" row for the real answer, tagged with its tier.
+  clearChatPending();
+  appendChatEntry('assistant', reply.text, reply.source || 'canned');
+  // If the brain was supposed to answer but fell back, flag it in the header
+  if (reply.source === 'brain') {
+    setUplink('online', 'UPLINK: BRAIN_LINK');
+  } else if (KURISU_BRAIN.apiKey) {
+    setUplink('offline', 'UPLINK: OFFLINE');
+  }
 
   kurisuReplying = false;
   if (live2DController) live2DController.isThinking = false;
@@ -388,13 +924,15 @@ function timeAwareGreeting() {
 // from the AMADEUS Brain (memory-backed) when it arrives.
 function kurisuGreetOnLoad() {
   if (!kurisuBubbleEl) return;
-  showKurisuBubble(timeAwareGreeting(), 5500);
+  const greetLine = timeAwareGreeting();
+  showKurisuBubble(greetLine, 5500);
+  appendChatEntry('assistant', greetLine, 'history');
 
   if (!KURISU_BRAIN.apiKey) return;
   (async () => {
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 25000);
+      const timer = setTimeout(() => ctrl.abort(), KURISU_BRAIN.timeoutMs);
       const res = await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/hello`, {
         method: 'GET',
         headers: { 'Authorization': `Bearer ${KURISU_BRAIN.apiKey}` },
@@ -403,11 +941,12 @@ function kurisuGreetOnLoad() {
       clearTimeout(timer);
       if (!res.ok) return;
       const data = await res.json();
-      const reply = (data.response || '').trim();
+      const reply = cleanReply(data.response);
       if (!reply) return;
       setTimeout(() => {
         if (isIdle || isSleeping || kurisuInput) return;
         showKurisuBubble(reply, 8000);
+        appendChatEntry('assistant', reply, data.emotion ? 'brain' : 'history');
         if (live2DController && live2DController.setEmotion) {
           live2DController.setEmotion(data.emotion || emotionFromText(reply), 7000);
         }
@@ -423,7 +962,7 @@ function kurisuGreetOnLoad() {
 async function kurisuThink() {
   if (!KURISU_BRAIN.apiKey) return null;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 12000);
+  const timer = setTimeout(() => ctrl.abort(), KURISU_BRAIN.timeoutMs);
   try {
     const res = await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/think`, {
       method: 'POST',
@@ -437,7 +976,7 @@ async function kurisuThink() {
     clearTimeout(timer);
     if (!res.ok) throw new Error('Brain think HTTP ' + res.status);
     const data = await res.json();
-    const reply = (data.response || '').trim();
+    const reply = cleanReply(data.response);
     if (!reply) throw new Error('Empty think reply');
     return { text: reply, emotion: data.emotion || emotionFromText(reply) };
   } catch (err) {
@@ -476,6 +1015,7 @@ function scheduleIdleChatter() {
       // Re-check: the user may have started typing or the system went idle
       if (canSpeak()) {
         showKurisuBubble(text, 8000);
+        appendChatEntry('assistant', text, thought ? 'brain' : 'canned');
         if (live2DController && live2DController.setEmotion) {
           live2DController.setEmotion(emotion, 7000);
         }
@@ -486,34 +1026,65 @@ function scheduleIdleChatter() {
 }
 
 function initKurisuChatInput() {
+  const chatPanel = document.getElementById('chat-panel');
+  const sendBtn = document.getElementById('chat-send');
+  // Clicking inside the chat panel must not trigger the world-line glitch
+  if (chatPanel) chatPanel.addEventListener('pointerdown', (e) => e.stopPropagation());
+  // Keep the live buffer in sync with whatever is in the visible box
+  if (kurisuInputEl) {
+    kurisuInputEl.addEventListener('input', () => { kurisuInput = kurisuInputEl.value; });
+  }
+
+  const send = () => {
+    if (kurisuReplying) return;
+    const msg = (kurisuInputEl ? kurisuInputEl.value : kurisuInput).trim();
+    if (!msg) return;
+    if (kurisuInputEl) kurisuInputEl.value = '';
+    kurisuInput = '';
+    if (live2DController) live2DController.isTyping = false;
+    kurisuSay(msg);
+  };
+  if (sendBtn) sendBtn.addEventListener('click', send);
+
   window.addEventListener('keydown', (e) => {
     if (isLivelyPaused) return;
     markActivity();
-    if (e.key === 'Enter') {
-      if (kurisuInput.trim()) {
-        const msg = kurisuInput.trim();
-        kurisuInput = '';
-        if (live2DController) live2DController.isTyping = false;
-        kurisuSay(msg);
+    const inRealField = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' ||
+                                     e.target.isContentEditable);
+    if (inRealField) {
+      // Typing inside the chat box itself: Enter sends, nothing else to do.
+      if (e.key === 'Enter' && e.target === kurisuInputEl) {
+        e.preventDefault();
+        send();
       }
       return;
     }
+    if (e.key === 'Enter') {
+      send();
+      return;
+    }
     if (e.key === 'Escape') {
+      if (kurisuInputEl) { kurisuInputEl.value = ''; kurisuInputEl.blur(); }
       kurisuInput = '';
       if (live2DController) live2DController.isTyping = false;
       hideKurisuBubble();
       return;
     }
-    if (e.key === 'Backspace') {
-      kurisuInput = kurisuInput.slice(0, -1);
-      return;
-    }
     if (e.key.length === 1) {
-      kurisuInput += e.key;
+      // Any typed key routes into the chat box and focuses it
+      if (kurisuInputEl) {
+        kurisuInputEl.focus();
+        const start = kurisuInputEl.selectionStart == null ? kurisuInputEl.value.length : kurisuInputEl.selectionStart;
+        kurisuInputEl.setRangeText(e.key, start, start, 'end');
+        kurisuInput = kurisuInputEl.value;
+      } else {
+        kurisuInput += e.key;
+      }
       if (live2DController) live2DController.isTyping = true;
       // "hello" triggers the classic lab greeting without pressing Enter
       if (!kurisuGreeted && /\bhello\b/i.test(kurisuInput)) {
         kurisuGreeted = true;
+        if (kurisuInputEl) kurisuInputEl.value = '';
         kurisuInput = '';
         if (live2DController) live2DController.isTyping = false;
         kurisuSay('hello');
@@ -566,6 +1137,7 @@ function enterSleepState(sleep) {
       if (isSleeping || !kurisuBubbleEl) return;
       const line = KURISU_WAKE_LINES[Math.floor(Math.random() * KURISU_WAKE_LINES.length)];
       showKurisuBubble(line, 6000);
+      appendChatEntry('assistant', line, 'history');
     }, 900);
     console.log('AMADEUS HUD: Kurisu woke up.');
   }
@@ -605,59 +1177,44 @@ function triggerWorldLineShift() {
 }
 
 // --- TIME-OF-DAY AMBIENCE ---
-// After 19:00 the HUD drops into a dimmer, colder "night ops" mode; it warms
-// back up in the morning. The CSS transition fades the switch over ~2.5s.
+// Drifts the backdrop through dawn / day / dusk / night by real local time.
+// Each period maps to CSS scene variables (see style.css), so the background
+// hue and brightness shift subtly and fade over ~2.5s.
 function applyTimeOfDay() {
   const hour = new Date().getHours();
-  const night = hour >= 19 || hour < 6;
-  document.body.classList.toggle('night-mode', night);
+  const period = hour < 6 ? 'night' : (hour < 8 ? 'dawn' : (hour < 16 ? 'day' : (hour < 19 ? 'dusk' : 'night')));
+  document.body.classList.toggle('night-mode', period === 'night');
+  document.body.classList.toggle('dawn-mode', period === 'dawn');
+  document.body.classList.toggle('day-mode', period === 'day');
+  document.body.classList.toggle('dusk-mode', period === 'dusk');
 }
 
-// --- WORLD LINE OSCILLOSCOPE ---
-// Replaces the old radar map with a lab oscilloscope: a scrolling graticule
-// plots three live signals — the divergence offset from the attractor (amber),
-// the current audio energy (cyan) and Kurisu's live cognitive state (violet:
-// her emotional baseline plus thought spikes while she thinks, types or talks)
-// — with a peak-hold marker, live numeric readouts and a scan head. The amber
-// trace is driven by real inputs (bass energy + the clock), so the scope
-// genuinely "measures" the world line.
-const SCOPE_SAMPLES = 120;      // ~8s of history at 15fps
-const SCOPE_AMPLITUDE = 0.006;  // divergence scale: ±0.006 fills the scope
-let scopeHistory = [];          // { d: divergence offset, a: audio energy, m: mind energy } samples
+// --- PHOSPHOR OSCILLOSCOPE ---
+// A classic CRT scope with two live traces: the audio signal (green) and
+// Each frame the previous draw is faded slightly, so the traces leave a
+// phosphor trail that glows and decays like an old CRT while the graticule
+// stays crisp. The scope draws a true sweep waveform (reconstructed from the
+// latest FFT bins) rather than a slow energy history, so it reads like a real
+// electric / sound signal. CH1 = live audio, CH2 = her thought/feeling state.
 let wlCanvas, wlCtx;
-let worldLineEnergy = 0; // fed by handleAudioFrame() from real or simulated bass
+let worldLineEnergy = 0;        // bass energy (fed by handleAudioFrame)
+let lastAudioLevel = 0;         // overall audio energy (fed by handleAudioFrame)
+let mindEnergy = 0.3;           // smoothed thought/feeling trace
+let lastSpectrum = new Array(32).fill(0); // most recent FFT bins for the waveform
+let smoothSpec = new Array(32).fill(0);   // time-smoothed bins so the trace morphs, not jumps
+let peakSpec = new Array(32).fill(0);     // peak-hold with fall-off for analyzer feel
+let peakFalloff = 0.82;                   // decay rate per frame for peak hold
+let audioEnv = 0;               // smoothed audio drive envelope
+let wlPhase2 = Math.random() * Math.PI * 2;  // mental carrier phase (CH2)
+let mindBaseline = 0;                         // slow vertical drift for scope DC offset
 
-// Emotional baseline for the scope's cognitive trace — same labels the Live2D
-// emotion engine produces. Higher-intensity feelings push the MIND trace up.
-const AMADEUS_EMOTION_INTENSITY = {
-  sleeping: 0.06,
-  sleepy:   0.10,
-  tired:    0.18,
-  calm:     0.30,
-  neutral:  0.30,
-  content:  0.38,
-  sad:      0.50,
-  annoyed:  0.62,
-  happy:    0.66,
-  curious:  0.70,
-  thinking: 0.76,
-  angry:    0.80,
-  excited:  0.86,
-  surprised: 0.92,
+// How intense each of her emotions reads on the MIND trace - same labels the
+// Live2D emotion engine produces. Higher-intensity feelings push it up.
+const EMOTION_INTENSITY = {
+  sleeping: 0.06, sleepy: 0.10, tired: 0.18, calm: 0.30, neutral: 0.30,
+  content: 0.38, sad: 0.50, annoyed: 0.62, happy: 0.66, curious: 0.70,
+  thinking: 0.76, angry: 0.80, excited: 0.86, surprised: 0.92,
 };
-let mindEnergy = 0.3; // smoothed cognitive trace (also read by the MIND readout)
-
-// Live divergence offset from the attractor — deterministic at any moment so
-// it "measures" the world line instead of showing arbitrary digits. Silence
-// contributes nothing (reading ≈ attractor); bass pushes it upward, and a slow
-// clock-derived wobble keeps the trace breathing in both directions.
-function currentDivergenceDelta() {
-  const now = new Date();
-  const t = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-  const audioPull = worldLineEnergy * 0.004;
-  const wobble = Math.sin(t / 1.6180339887) * 0.0015 + Math.sin(t / 2.7182818284) * 0.0008;
-  return audioPull + wobble;
-}
 
 function initWorldLine() {
   wlCanvas = document.getElementById('world-line-canvas');
@@ -668,9 +1225,9 @@ function initWorldLine() {
     const rect = wlCanvas.getBoundingClientRect();
     wlCanvas.width = Math.max(1, Math.round(rect.width * PERF.dpr));
     wlCanvas.height = Math.max(1, Math.round(rect.height * PERF.dpr));
-    scopeHistory = [];
   }
 
+  wlResize = resize;
   window.addEventListener('resize', resize);
   resize();
 
@@ -681,7 +1238,7 @@ function initWorldLine() {
 function drawScopeGraticule(w, h) {
   wlCtx.lineWidth = 1;
   // Fine grid
-  wlCtx.strokeStyle = 'rgba(126, 211, 250, 0.06)';
+   wlCtx.strokeStyle = 'rgba(255, 77, 85, 0.08)';
   const grid = 18;
   for (let x = grid; x < w; x += grid) {
     wlCtx.beginPath();
@@ -695,8 +1252,8 @@ function drawScopeGraticule(w, h) {
     wlCtx.lineTo(w, y);
     wlCtx.stroke();
   }
-  // Divergence zero baseline
-  wlCtx.strokeStyle = 'rgba(255, 122, 0, 0.12)';
+   // Horizontal center reference
+   wlCtx.strokeStyle = 'rgba(255, 77, 85, 0.12)';
   wlCtx.beginPath();
   wlCtx.moveTo(0, h / 2);
   wlCtx.lineTo(w, h / 2);
@@ -707,155 +1264,195 @@ function updateWorldLine() {
   if (!wlCtx || !wlCanvas) return;
   // Frozen frame while paused or idle: last draw stays on the canvas
   if (isLivelyPaused || isIdle) return;
+  // Don't burn 15fps of FFT math when the scope widget is hidden in settings
+  if (document.body.classList.contains('hide-scope')) return;
 
   const w = wlCanvas.width;
   const h = wlCanvas.height;
 
-  // Sample the live signal — same math the DELTA readout uses, so the scope
-  // and the numbers agree about where the world line is.
-  const delta = currentDivergenceDelta();
-  const audio = Math.max(0, Math.min(1, worldLineEnergy));
-
-  // Cognitive trace: her emotional baseline, kicked up while she thinks,
-  // types or speaks, with a slow clock-derived breathing term so the trace
-  // never sits perfectly flat.
-  const emotion = (live2DController && live2DController.currentEmotion) || 'neutral';
-  let mindTarget = AMADEUS_EMOTION_INTENSITY[emotion] || 0.3;
-  if (live2DController) {
-    if (live2DController.isThinking) mindTarget = Math.max(mindTarget, 0.9);
-    else if (live2DController.isTyping) mindTarget = Math.max(mindTarget, 0.7);
-    else if (live2DController.isSpeaking) mindTarget = Math.max(mindTarget, 0.6);
-  }
-  const tSec = new Date().getHours() * 3600 + new Date().getMinutes() * 60 + new Date().getSeconds();
-  mindTarget += Math.sin(tSec / 1.7) * 0.05 + Math.sin(tSec / 0.9) * 0.02;
-  mindEnergy += (mindTarget - mindEnergy) * 0.08;
-  const mind = Math.min(1, Math.max(0, mindEnergy));
-
-  scopeHistory.push({ d: delta, a: audio, m: mind });
-  if (scopeHistory.length > SCOPE_SAMPLES) scopeHistory.shift();
-
-  const n = scopeHistory.length;
-  const xFor = (i) => (i / (SCOPE_SAMPLES - 1)) * w;
-
-  wlCtx.clearRect(0, 0, w, h);
+  // Phosphor persistence: fade the previous frame instead of clearing. A touch
+  // more fade than before keeps fast-moving traces from smearing into a blob.
+  wlCtx.fillStyle = 'rgba(2, 4, 10, 0.26)';
+  wlCtx.fillRect(0, 0, w, h);
   drawScopeGraticule(w, h);
 
-  // Channel 1 — audio energy: filled trace rising from the bottom baseline
-  const baseY = h - 5;
-  const aAmp = h * 0.42;
-  const audioPath = () => {
-    wlCtx.beginPath();
-    for (let i = 0; i < n; i++) {
-      const y = baseY - Math.min(1, scopeHistory[i].a) * aAmp;
-      if (i === 0) wlCtx.moveTo(xFor(i), y);
-      else wlCtx.lineTo(xFor(i), y);
-    }
-  };
-  audioPath();
-  wlCtx.lineTo(xFor(n - 1), baseY);
-  wlCtx.lineTo(xFor(0), baseY);
-  wlCtx.closePath();
-  const aFill = wlCtx.createLinearGradient(0, baseY - aAmp, 0, baseY);
-  aFill.addColorStop(0, 'rgba(126, 211, 250, 0.30)');
-  aFill.addColorStop(1, 'rgba(126, 211, 250, 0.02)');
-  wlCtx.fillStyle = aFill;
-  wlCtx.fill();
-  audioPath();
-  wlCtx.strokeStyle = 'rgba(126, 211, 250, 0.85)';
-  wlCtx.lineWidth = 1.5;
-  wlCtx.stroke();
+  // CH1 - audio: the live spectrum as vertical peaks (frequency display).
+  const audio = Math.max(0, Math.min(1, lastAudioLevel));
+  audioEnv += (audio - audioEnv) * 0.28;
 
-  // Peak hold marker for the audio channel
-  let peak = 0;
-  for (const s of scopeHistory) if (s.a > peak) peak = s.a;
-  const py = baseY - peak * aAmp;
-  wlCtx.setLineDash([3, 5]);
-  wlCtx.strokeStyle = 'rgba(126, 211, 250, 0.35)';
-  wlCtx.beginPath();
-  wlCtx.moveTo(0, py);
-  wlCtx.lineTo(w, py);
-  wlCtx.stroke();
-  wlCtx.setLineDash([]);
-
-  // Channel 2 — divergence offset from the attractor (amber, centered trace)
-  const midY = h / 2;
-  const dScale = (h / 2 - 8) / SCOPE_AMPLITUDE;
-  wlCtx.beginPath();
-  for (let i = 0; i < n; i++) {
-    const y = midY - scopeHistory[i].d * dScale;
-    if (i === 0) wlCtx.moveTo(xFor(i), y);
-    else wlCtx.lineTo(xFor(i), y);
+  // CH2 - mind: her emotional state, kicked up while she thinks/types/speaks.
+  const emotion = (live2DController && live2DController.currentEmotion) || 'neutral';
+  let mindTarget = EMOTION_INTENSITY[emotion] || 0.3;
+  if (live2DController) {
+    if (live2DController.isThinking) mindTarget = Math.max(mindTarget, 0.9);
+    else if (live2DController.isTyping) mindTarget = Math.max(mindTarget, 0.72);
+    else if (live2DController.isSpeaking) mindTarget = Math.max(mindTarget, 0.6);
   }
-  wlCtx.strokeStyle = 'rgba(255, 122, 0, 0.95)';
-  wlCtx.lineWidth = 1.5;
-  wlCtx.shadowColor = 'rgba(255, 122, 0, 0.7)';
-  wlCtx.shadowBlur = 6;
-  wlCtx.stroke();
-  wlCtx.shadowBlur = 0;
+  mindEnergy += (mindTarget - mindEnergy) * 0.12;
+  const mind = Math.min(1, Math.max(0, mindEnergy));
 
-  // Channel 3 — cognitive state (violet, filled band falling from the top)
-  const mBaseY = h * 0.16;
-  const mAmp = h * 0.30;
-  const mindPath = () => {
-    wlCtx.beginPath();
-    for (let i = 0; i < n; i++) {
-      const y = mBaseY + scopeHistory[i].m * mAmp;
-      if (i === 0) wlCtx.moveTo(xFor(i), y);
-      else wlCtx.lineTo(xFor(i), y);
+  const spec = lastSpectrum;
+
+  // Time-smooth each bin so the spectral peaks transition smoothly with the
+  // music instead of jumping shape every frame (the #1 source of "wonky").
+  for (let i = 0; i < smoothSpec.length; i++) {
+    smoothSpec[i] += ((spec[i] || 0) - smoothSpec[i]) * 0.35;
+  }
+
+  // Peak-hold with fall-off: tracks a decaying peak per bin so fast attacks
+  // spike instantly, and releases decay smoothly like a real spectrum analyzer.
+  for (let i = 0; i < peakSpec.length; i++) {
+    if (smoothSpec[i] > peakSpec[i]) {
+      peakSpec[i] = smoothSpec[i];
+    } else {
+      peakSpec[i] *= peakFalloff;
     }
-  };
-  mindPath();
-  wlCtx.lineTo(xFor(n - 1), 0);
-  wlCtx.lineTo(xFor(0), 0);
-  wlCtx.closePath();
-  const mFill = wlCtx.createLinearGradient(0, 0, 0, mBaseY + mAmp);
-  mFill.addColorStop(0, 'rgba(179, 136, 255, 0.28)');
-  mFill.addColorStop(1, 'rgba(179, 136, 255, 0.02)');
-  wlCtx.fillStyle = mFill;
-  wlCtx.fill();
-  mindPath();
-  wlCtx.strokeStyle = 'rgba(179, 136, 255, 0.85)';
-  wlCtx.lineWidth = 1.5;
-  wlCtx.stroke();
+  }
 
-  // Live readouts (top corners) + peak label
-  wlCtx.font = '9px "Share Tech Mono", monospace';
-  wlCtx.textBaseline = 'top';
-  const dSign = delta >= 0 ? '+' : '-';
-  wlCtx.fillStyle = 'rgba(255, 122, 0, 0.9)';
-  wlCtx.fillText(`Δ ${dSign}${Math.abs(delta).toFixed(4)}`, 4, 3);
-  wlCtx.fillStyle = 'rgba(179, 136, 255, 0.9)';
-  wlCtx.fillText(`M ${Math.round(mind * 100)}%`, 4, 14);
-  wlCtx.fillStyle = 'rgba(126, 211, 250, 0.85)';
-  wlCtx.fillText(`A ${Math.round(audio * 100)}%`, w - 34, 3);
-  wlCtx.fillStyle = 'rgba(126, 211, 250, 0.55)';
-  wlCtx.fillText(`PK ${Math.round(peak * 100)}%`, w - 34, py + 2);
+  // Tunable scope params from the settings panel (colors, speed, density).
+  const sc = (SETTINGS && SETTINGS.scope) ? SETTINGS.scope : SETTINGS_DEFAULTS.scope;
+  const c1 = hexToRgb(sc.ch1) || { r: 57, g: 255, b: 122 };
+  const c2 = hexToRgb(sc.ch2) || { r: 179, g: 136, b: 255 };
+  const step = PERF_LEVELS[perfLevel].scopeStep;
 
-  // Scan head — bright vertical sweep line at the right edge
+  // CH1 - SOUND SPECTRUM (lower band): a real-time frequency display like a
+   // spectrum analyzer / oscilloscope in "spectrum" mode. We draw the actual
+   // FFT bins as vertical peaks across the scope width so you see exactly what
+   // frequencies are present - bass on the left, treble on the right. No fake
+   // sine-wave reconstruction, no wonky morphing; just the raw spectral energy.
+   const N = peakSpec.length;
+   // Loudness = overall energy for amplitude scaling of the peaks
+   let sigSum = 0;
+   for (let i = 0; i < N; i++) sigSum += peakSpec[i];
+   const drive = audioEnv * (0.3 + 0.7 * Math.min(1, sigSum / 4));
+   const peakAmp = h * 0.28 * (0.10 + 0.90 * drive);
+
+   // Draw the spectrum as filled vertical lines for each frequency bin
+   wlCtx.lineCap = 'butt';
+   // Soft glow pass - wider lines with low opacity for CRT phosphor bloom
+   wlCtx.beginPath();
+   for (let i = 0; i < N; i++) {
+     const a = peakSpec[i];
+     if (a < 0.002) continue;
+     const x = (i / (N - 1)) * w;
+     const barH = a * peakAmp;
+     wlCtx.moveTo(x, h * 0.68);
+     wlCtx.lineTo(x, h * 0.68 - barH);
+   }
+   wlCtx.strokeStyle = `rgba(${c1.r}, ${c1.g}, ${c1.b}, 0.25)`;
+   wlCtx.lineWidth = 6;
+   wlCtx.shadowBlur = 4;
+   wlCtx.shadowColor = `rgba(${c1.r}, ${c1.g}, ${c1.b}, 0.35)`;
+   wlCtx.stroke();
+   // Sharp foreground trace on top
+   wlCtx.strokeStyle = `rgba(${c1.r}, ${c1.g}, ${c1.b}, 0.95)`;
+   wlCtx.lineWidth = 1.5;
+   wlCtx.shadowBlur = 0;
+   wlCtx.stroke();
+
+   // CH2 - MIND/EEG (violet, upper band): her emotional/mental state as a
+   // brainwave pattern. Base rhythms are modulated by emotion intensity and
+   // cognitive state (thinking/typing/speaking). Higher emotions = faster,
+   // spikier, brighter traces. Each emotion has a distinct spectral character.
+   wlPhase2 += 0.08 + mind * 0.12;  // mental activity drives rhythm speed
+   const mindAmp = h * 0.15 * (0.10 + 0.90 * mind);
+
+   // Emotion-specific frequency content â different feelings engage different
+   // brainwave bands (delta for calm/sleep, beta for thinking, etc.).
+   const e = emotion;
+   let waveFreq = 4.2;   // base rhythm
+   let hiFreq = 13.1;    // high-frequency detail
+   let loDepth = 0.32;   // delta component
+   let hiDepth = 0.24;   // beta/gamma component
+   if (e === 'sleeping' || e === 'sleepy') {
+     waveFreq = 1.2; hiFreq = 6.1; loDepth = 0.44; hiDepth = 0.08;
+   } else if (e === 'calm' || e === 'content') {
+     waveFreq = 3.5; hiFreq = 9.2; loDepth = 0.38; hiDepth = 0.16;
+   } else if (e === 'happy' || e === 'excited' || e === 'surprised') {
+     waveFreq = 8.4; hiFreq = 22.3; loDepth = 0.24; hiDepth = 0.36;
+   } else if (e === 'thinking' || e === 'curious') {
+     waveFreq = 6.8; hiFreq = 17.6; loDepth = 0.28; hiDepth = 0.32;
+   } else if (e === 'annoyed' || e === 'angry') {
+     waveFreq = 11.2; hiFreq = 28.4; loDepth = 0.42; hiDepth = 0.44;
+   } else if (e === 'sad') {
+     waveFreq = 2.8; hiFreq = 7.8; loDepth = 0.48; hiDepth = 0.06;
+   }
+   // Cognitive state adds energy on top of emotion
+   if (live2DController) {
+     if (live2DController.isThinking) waveFreq *= 1.6;
+     else if (live2DController.isTyping) waveFreq *= 1.3;
+     else if (live2DController.isSpeaking) waveFreq *= 1.15;
+   }
+
+   // Draw the mental trace with emotion-driven wave patterns
+   wlCtx.beginPath();
+   for (let x = 0; x <= w; x += step) {
+     const t = x / w;
+     const ph = wlPhase2;
+     // Multi-harmonic brainwave: delta/theta/alpha/beta mix
+     let v =
+         loDepth * Math.sin(t * Math.PI * 2 * waveFreq * 0.34 + ph * 0.3)
+       + 0.38 * Math.sin(t * Math.PI * 2 * waveFreq * 0.7 + ph * 0.8 + 0.8)
+       + 0.32 * Math.sin(t * Math.PI * 2 * waveFreq * 1.2 + ph * 1.4 + 1.9)
+       + hiDepth * Math.sin(t * Math.PI * 2 * hiFreq + ph * 2.3 + 3.1);
+     // Mental drive: stronger + spikier as activity rises
+     v *= 0.20 + 0.80 * mind;
+     // Sharp neural spikes that slowly drift in time â more frequent when
+     // she's thinking or excited
+     const spikeFreq = live2DController && live2DController.isThinking ? 0.014 : 0.021;
+     const sp = Math.sin(x * spikeFreq + Math.floor(ph / 4) * 5.17);
+     if (sp > (live2DController && live2DController.isThinking ? 0.92 : 0.98)) {
+       v -= 0.7 * mind * sp;
+     }
+     v = Math.max(-1.1, Math.min(1.1, v));
+     const y = h * 0.22 - v * mindAmp;
+     if (x === 0) wlCtx.moveTo(x, y);
+     else wlCtx.lineTo(x, y);
+   }
+
+   // Emotion-tinted glow â intensity scales with mental energy
+   const glowA = Math.min(1, 0.45 + mind * 0.55);
+   const glowR = c2.r + Math.round((255 - c2.r) * mind * 0.3);
+   const glowG = c2.g + Math.round((200 - c2.g) * mind * 0.3);
+   const glowB = c2.b + Math.round((255 - c2.b) * mind * 0.3);
+   wlCtx.strokeStyle = `rgba(${glowR}, ${glowG}, ${glowB}, 0.22)`;
+   wlCtx.lineWidth = 7;
+   wlCtx.shadowBlur = 5;
+   wlCtx.shadowColor = `rgba(${glowR}, ${glowG}, ${glowB}, 0.35)`;
+   wlCtx.stroke();
+   // Sharp foreground trace on top
+   wlCtx.strokeStyle = `rgba(${glowR}, ${glowG}, ${glowB}, 0.98)`;
+   wlCtx.lineWidth = 1.5;
+   wlCtx.shadowBlur = 0;
+   wlCtx.stroke();
+
+  // Scan head - bright vertical sweep line at the right edge
   const sx = w - 1;
   const scan = wlCtx.createLinearGradient(sx - 14, 0, sx, 0);
-  scan.addColorStop(0, 'rgba(255, 122, 0, 0)');
-  scan.addColorStop(1, 'rgba(255, 122, 0, 0.45)');
+  scan.addColorStop(0, 'rgba(255, 77, 85, 0)');
+  scan.addColorStop(1, 'rgba(255, 77, 85, 0.4)');
   wlCtx.fillStyle = scan;
   wlCtx.fillRect(sx - 14, 0, 14, h);
-  wlCtx.fillStyle = 'rgba(255, 122, 0, 0.8)';
+  wlCtx.fillStyle = 'rgba(255, 77, 85, 0.7)';
   wlCtx.fillRect(sx, 0, 1, h);
+
+  // Live readouts in the corners
+  wlCtx.font = '9px "Share Tech Mono", monospace';
+  wlCtx.textBaseline = 'top';
+  wlCtx.fillStyle = `rgba(${c1.r}, ${c1.g}, ${c1.b}, 0.9)`;
+  wlCtx.fillText('SIG ' + Math.round(audio * 100) + '%', 4, 3);
+  wlCtx.fillStyle = `rgba(${c2.r}, ${c2.g}, ${c2.b}, 0.9)`;
+  wlCtx.fillText('MIND ' + Math.round(mind * 100) + '%', w - 44, 3);
 }
 
 function updateWorldLineMeta() {
-  const deltaEl = document.getElementById('wl-delta');
+  const audioEl = document.getElementById('wl-audio');
   const mindEl = document.getElementById('wl-mind');
-  if (!deltaEl) return;
   // Freeze the readouts together with the scope while paused or idle
   if (isLivelyPaused || isIdle) return;
-  // DELTA = live divergence offset — matches the scope's amber trace.
-  const delta = currentDivergenceDelta();
-  const sign = delta >= 0 ? '+' : '-';
-  deltaEl.innerText = `DELTA ${sign}${Math.abs(delta).toFixed(4)}`;
-  // MIND = her live cognitive trace — matches the scope's violet band.
-  if (mindEl) mindEl.innerText = `MIND ${Math.round(mindEnergy * 100)}%`;
+  if (audioEl) audioEl.innerText = 'SIG ' + Math.round(lastAudioLevel * 100) + '%';
+  if (mindEl) mindEl.innerText = 'MIND ' + Math.round(mindEnergy * 100) + '%';
 }
-
 // --- CLOCK & DATE WIDGET ---
 function initClock() {
   const clockEl = document.getElementById('hud-clock');
@@ -922,14 +1519,17 @@ function initAudioCanvas() {
     audioCanvas.width = Math.round(window.innerWidth * PERF.dpr);
     audioCanvas.height = Math.round(window.innerHeight * PERF.dpr);
     buildStaticRing();
+    buildSpinRing();
   }
-  
+
+  audioResize = resize;
   resize();
   window.addEventListener('resize', resize);
 }
 
 // Pre-render the static radial grid circles once per resize so they aren't
-// re-stroked on every animation frame.
+// re-stroked on every animation frame. Also bakes a rotating tick ring into an
+// offscreen canvas so the spin only costs one drawImage per frame.
 function buildStaticRing() {
   if (!audioCanvas) return;
   staticRingCanvas = document.createElement('canvas');
@@ -942,23 +1542,94 @@ function buildStaticRing() {
   const cy = staticRingCanvas.height / 2;
   const radius = Math.min(audioCanvas.width, audioCanvas.height) * 0.17;
 
-  sctx.strokeStyle = 'rgba(230, 0, 38, 0.04)';
+  // Concentric grid rings (unified red)
+  sctx.strokeStyle = 'rgba(255, 77, 85, 0.05)';
   sctx.lineWidth = 1;
-  for (const r of [radius - 25, radius, radius + 25]) {
+  for (const r of [radius - 30, radius, radius + 30]) {
     sctx.beginPath();
     sctx.arc(cx, cy, r, 0, Math.PI * 2);
     sctx.stroke();
   }
+  // Faint cross-hairs so the rotation reads against the symmetric grid
+  sctx.strokeStyle = 'rgba(255, 85, 170, 0.06)';
+  for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+    sctx.beginPath();
+    sctx.moveTo(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius);
+    sctx.lineTo(cx + Math.cos(a) * (radius + 38), cy + Math.sin(a) * (radius + 38));
+    sctx.stroke();
+  }
 
-  // Rebuild the shared spectrum-bar gradient once per resize instead of every frame
+  // Shared spectrum-bar gradient: crimson core blooming to pink.
   if (ctx) {
-    ringBarGradient = ctx.createRadialGradient(cx, cy, radius, cx, cy, radius + 110);
-    ringBarGradient.addColorStop(0, 'rgba(230, 0, 38, 0.8)');   // crimson inner
-    ringBarGradient.addColorStop(1, 'rgba(255, 77, 109, 0.9)'); // rose outer
+    ringBarGradient = ctx.createRadialGradient(cx, cy, radius, cx, cy, radius + 130);
+    ringBarGradient.addColorStop(0, 'rgba(255, 77, 85, 0.95)');   // electric red inner
+    ringBarGradient.addColorStop(0.55, 'rgba(255, 85, 170, 0.85)');
+    ringBarGradient.addColorStop(1, 'rgba(255, 85, 170, 0.25)');  // soft pink fade
   }
 }
 
+// Slowly rotating tick ring, pre-rendered once per resize. Drawn in its own
+// offscreen canvas so the per-frame cost is a single rotate + drawImage.
+let spinRingCanvas = null;
+let ringSpinAngle = 0;
+
+function buildSpinRing() {
+  if (!audioCanvas) return;
+  spinRingCanvas = document.createElement('canvas');
+  spinRingCanvas.width = audioCanvas.width;
+  spinRingCanvas.height = audioCanvas.height;
+  const g = spinRingCanvas.getContext('2d');
+  if (!g) return;
+  const cx = spinRingCanvas.width / 2;
+  const cy = spinRingCanvas.height / 2;
+  const radius = Math.min(audioCanvas.width, audioCanvas.height) * 0.17;
+
+   // Radial tick marks (60 around the outer edge) so rotation is obvious
+   g.strokeStyle = 'rgba(255, 77, 85, 0.35)';
+  g.lineWidth = 1.5;
+  g.lineCap = 'round';
+  const ticks = 60;
+  for (let i = 0; i < ticks; i++) {
+    const a = (i / ticks) * Math.PI * 2;
+    const inner = radius + 8;
+    const outer = radius + (i % 5 === 0 ? 16 : 11);
+    g.beginPath();
+    g.moveTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
+    g.lineTo(cx + Math.cos(a) * outer, cy + Math.sin(a) * outer);
+    g.stroke();
+  }
+
+  // A single dashed "calibration" arc that slowly counter-rotates
+  g.setLineDash([3, 26]);
+  wlCtx.strokeStyle = `rgba(255, 77, 85, 0.45)`;
+  g.lineWidth = 1.5;
+  g.beginPath();
+  g.arc(cx, cy, radius - 6, 0, Math.PI * 2);
+  g.stroke();
+  g.setLineDash([]);
+}
+
 // Draw Audio Ring spectrum behind Kurisu
+// --- FREQUENCY BAND COLOR INTERPOLATION ---
+// bass (0) = crimson/red, mids (~0.5) = white, treble (1) = hot pink
+function freqColor(freq) {
+  if (freq < 0.5) {
+    const t = freq * 2;  // 0 -> 1 across bass range
+    // Interpolate crimson (#ff4d55) â white (#ffffff)
+    const r = Math.round(255 * (1 - t) + 255 * t);
+    const g = Math.round(77 * (1 - t) + 255 * t);
+    const b = Math.round(85 * (1 - t) + 255 * t);
+    return { r, g, b };
+  } else {
+    const t = (freq - 0.5) * 2;  // 0 -> 1 across treble range
+    // Interpolate white (#ffffff) â hot pink (#ff55aa)
+    const r = Math.round(255 * (1 - t) + 255 * t);
+    const g = Math.round(255 * (1 - t) + 85 * t);
+    const b = Math.round(255 * (1 - t) + 170 * t);
+    return { r, g, b };
+  }
+}
+
 function drawAudioRing(fftData, now) {
   if (!ctx || !audioCanvas) return;
   
@@ -976,7 +1647,7 @@ function drawAudioRing(fftData, now) {
   const bassAvg = bassSum / 10;
   const centerPulseRadius = radius - 20 + bassAvg * 25;
 
-  // 1. Rotating gears — redraw into an offscreen snapshot every GEAR_INTERVAL ms
+  // 1. Rotating gears â€” redraw into an offscreen snapshot every GEAR_INTERVAL ms
   //    (they turn too slowly to need every frame), then blit the snapshot.
   if (now - lastGearUpdate >= GEAR_INTERVAL) {
     lastGearUpdate = now;
@@ -987,68 +1658,89 @@ function drawAudioRing(fftData, now) {
   // 2. Static radial grid (pre-rendered offscreen)
   if (staticRingCanvas) ctx.drawImage(staticRingCanvas, 0, 0);
 
-  // 3. Central pulse glow ring (crimson red) — single shadow draw per frame
-  ctx.strokeStyle = `rgba(230, 0, 38, ${0.1 + bassAvg * 0.45})`;
+  // 2b. Slowly rotating tick ring (baked offscreen; just rotate + blit)
+  ringSpinAngle += 0.0015;
+  if (spinRingCanvas) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(ringSpinAngle);
+    ctx.drawImage(spinRingCanvas, -cx, -cy);
+    ctx.restore();
+  }
+
+  // 3. Central pulse glow ring (crimson) â€” single shadow draw per frame
+  ctx.strokeStyle = `rgba(255, 77, 85, ${0.10 + bassAvg * 0.45})`;
   ctx.lineWidth = 3;
-  ctx.shadowColor = '#e60026';
+  ctx.shadowColor = '#ff4d55';
   ctx.shadowBlur = 8;
   ctx.beginPath();
   ctx.arc(cx, cy, centerPulseRadius, 0, Math.PI * 2);
   ctx.stroke();
   ctx.shadowBlur = 0; // reset shadow
 
-  // 4. Radial frequency lines — single shared gradient + no shadow
-  const numBars = Math.min(fftData.length, 64);
-  ctx.lineWidth = 2.5;
-  ctx.lineCap = 'round';
+  // 4. Radial frequency lines â€” each bar colored by frequency band:
+   //    bass (red/crimson) â mids (white) â treble (pink). Glow falloff pass
+   //    so low bars stay a faint glow instead of disappearing.
+   const numBars = Math.min(fftData.length, PERF_LEVELS[perfLevel].ringBars);
+   ctx.lineCap = 'round';
 
-  ctx.strokeStyle = ringBarGradient || 'rgba(230, 0, 38, 0.8)';
+   for (let i = 0; i < numBars; i++) {
+     const angle = (i / numBars) * Math.PI * 2;
+     const value = fftData[i] || 0;
+     const lineLength = value * 110;
+     const freq = i / numBars;  // 0 = bass, 1 = treble
 
-  for (let i = 0; i < numBars; i++) {
-    // Distribute angles around circle
-    const angle = (i / numBars) * Math.PI * 2;
-    const value = fftData[i] || 0;
-    const lineLength = value * 110;
-    
-    // Inner coordinates
-    const x1 = cx + Math.cos(angle) * radius;
-    const y1 = cy + Math.sin(angle) * radius;
-    
-    // Outer coordinates
-    let x2 = cx + Math.cos(angle) * (radius + lineLength);
-    let y2 = cy + Math.sin(angle) * (radius + lineLength);
+     // Interpolate color across spectrum: crimson â white â hot pink
+     const barColor = freqColor(freq);
 
-    // Gravitational lens: bars near the cursor bend toward it
-    if (cursorSeen) {
-      const mouseCX = cursorNX * audioCanvas.width;
-      const mouseCY = cursorNY * audioCanvas.height;
-      const gravRadius = Math.min(audioCanvas.width, audioCanvas.height) * 0.30;
-      const mdx = x2 - mouseCX;
-      const mdy = y2 - mouseCY;
-      const md2 = mdx * mdx + mdy * mdy;
-      if (md2 < gravRadius * gravRadius) {
-        const d = Math.sqrt(md2);
-        const strength = (1 - d / gravRadius) * 0.45;
-        x2 += mdx * strength;
-        y2 += mdy * strength;
-      }
-    }
-    
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-  }
+     const x1 = cx + Math.cos(angle) * radius;
+     const y1 = cy + Math.sin(angle) * radius;
+     let x2 = cx + Math.cos(angle) * (radius + lineLength);
+     let y2 = cy + Math.sin(angle) * (radius + lineLength);
 
-  // 5. Cursor gravitational lens glow (only near the ring, subtle)
+     // Gravitational lens: bars near the cursor bend toward it
+     if (cursorSeen) {
+       const mouseCX = cursorNX * audioCanvas.width;
+       const mouseCY = cursorNY * audioCanvas.height;
+       const gravRadius = Math.min(audioCanvas.width, audioCanvas.height) * 0.30;
+       const mdx = x2 - mouseCX;
+       const mdy = y2 - mouseCY;
+       const md2 = mdx * mdx + mdy * mdy;
+       if (md2 < gravRadius * gravRadius) {
+         const d = Math.sqrt(md2);
+         const strength = (1 - d / gravRadius) * 0.45;
+         x2 += mdx * strength;
+         y2 += mdy * strength;
+       }
+     }
+
+     // Glow falloff: a wide, faint pass first so quiet bars still shimmer
+     ctx.strokeStyle = `rgba(${barColor.r}, ${barColor.g}, ${barColor.b}, ${Math.max(0, 0.08 + value * 0.16)})`;
+     ctx.lineWidth = 5;
+     ctx.beginPath();
+     ctx.moveTo(x1, y1);
+     ctx.lineTo(x2, y2);
+     ctx.stroke();
+
+     // Core pass: crisp bright line
+     ctx.strokeStyle = `rgba(${barColor.r}, ${barColor.g}, ${barColor.b}, ${Math.max(0.15, Math.min(1, 0.55 + value * 0.95))})`;
+     ctx.lineWidth = 2.2;
+     ctx.beginPath();
+     ctx.moveTo(x1, y1);
+     ctx.lineTo(x2, y2);
+     ctx.stroke();
+   }
+   ctx.globalAlpha = 1;
+
+   // 5. Cursor gravitational lens glow (only near the ring, subtle, crimson)
   if (cursorSeen) {
     const mouseCX = cursorNX * audioCanvas.width;
     const mouseCY = cursorNY * audioCanvas.height;
     if (Math.hypot(mouseCX - cx, mouseCY - cy) < Math.min(audioCanvas.width, audioCanvas.height) * 0.45) {
       const glowR = 28 + bassAvg * 46;
       const glow = ctx.createRadialGradient(mouseCX, mouseCY, 0, mouseCX, mouseCY, glowR);
-      glow.addColorStop(0, 'rgba(126, 211, 250, 0.10)');
-      glow.addColorStop(1, 'rgba(126, 211, 250, 0)');
+      glow.addColorStop(0, 'rgba(255, 77, 85, 0.10)');
+      glow.addColorStop(1, 'rgba(255, 77, 85, 0)');
       ctx.fillStyle = glow;
       ctx.beginPath();
       ctx.arc(mouseCX, mouseCY, glowR, 0, Math.PI * 2);
@@ -1056,19 +1748,19 @@ function drawAudioRing(fftData, now) {
     }
   }
 
-  // 6. Ambient energy halo around Kurisu — two counter-rotating dashed rings
-  //    that swell and brighten with bass (cheap: 2 stroked arcs).
+   // 6. Ambient energy halo around Kurisu â€ two counter-rotating red/pink
+   //    dashed rings that swell and brighten with bass (cheap: 2 stroked arcs).
   const haloR = Math.min(audioCanvas.width, audioCanvas.height) * (0.30 + bassAvg * 0.03);
   const spin = now * 0.00015;
   ctx.save();
   ctx.lineWidth = 1.5;
   ctx.setLineDash([2, 14]);
-  ctx.strokeStyle = `rgba(126, 211, 250, ${(0.05 + bassAvg * 0.18).toFixed(3)})`;
+  ctx.strokeStyle = `rgba(255, 77, 85, ${(0.05 + bassAvg * 0.18).toFixed(3)})`;
   ctx.beginPath();
   ctx.arc(cx, cy, haloR, spin, spin + Math.PI * 2);
   ctx.stroke();
   ctx.setLineDash([18, 6]);
-  ctx.strokeStyle = `rgba(255, 77, 109, ${(0.04 + bassAvg * 0.14).toFixed(3)})`;
+  ctx.strokeStyle = `rgba(255, 85, 170, ${(0.04 + bassAvg * 0.14).toFixed(3)})`;
   ctx.beginPath();
   ctx.arc(cx, cy, haloR * 0.9, -spin * 1.6, -spin * 1.6 + Math.PI * 2);
   ctx.stroke();
@@ -1178,8 +1870,8 @@ function drawClockworkBackground(ctx, cx, cy, bass) {
   gearAngle += baseRotationSpeed + (bass * 0.0035);
   
   const scale = 1.0 + (bass * 0.04);
-  const strokeColor = `rgba(230, 0, 38, ${0.07 + bass * 0.05})`;
-  const lineStroke = `rgba(230, 0, 38, 0.035)`;
+  const strokeColor = `rgba(255, 77, 85, ${0.07 + bass * 0.05})`;
+  const lineStroke = `rgba(255, 77, 85, 0.035)`;
   
   // Layout coordinates of gears/dials matching retro mechanical diagram in image
   const centers = [
@@ -1212,7 +1904,7 @@ function drawClockworkBackground(ctx, cx, cy, bass) {
   ctx.stroke();
 
   // Dotted secondary rings
-  ctx.strokeStyle = `rgba(230, 0, 38, 0.015)`;
+   ctx.strokeStyle = `rgba(255, 77, 85, 0.015)`;
   for (let i = 0; i < centers.length; i++) {
     ctx.beginPath();
     ctx.arc(centers[i].x, centers[i].y, centers[i].r * 1.4, 0, Math.PI * 2);
@@ -1236,313 +1928,6 @@ function drawClockworkBackground(ctx, cx, cy, bass) {
       drawCoordinateDial(ctx, c.x, c.y, activeRadius * 1.22, 24, -currentAngle * 0.35, strokeColor);
     }
   });
-}
-
-// --- AMADEUS COGNITIVE CORE VISUALIZER ---
-// A live neural-core renderer for the freed top-right panel space. The network
-// mirrors her emotional state (node/link color), swells with bass energy, and
-// fires periodic "thought ripples" that travel node-to-node. Beneath it, a
-// thought ticker cycles short context-aware inner lines — reacting to typing,
-// proximity, the soundtrack, and the time of day.
-const CORE_FPS = 1000 / 20;
-const CORE_NODE_COUNT = 26;
-const CORE_LINK_DIST = 0.24; // normalized-space link distance threshold
-
-// Emotion -> RGB. Uses the same labels the Live2D emotion engine produces.
-const AMADEUS_EMOTION_COLORS = {
-  content:   [126, 211, 250], // cyan
-  neutral:   [126, 211, 250],
-  calm:      [126, 211, 250],
-  happy:     [126, 224, 150], // green
-  excited:   [126, 224, 150],
-  surprised: [255, 214, 102], // yellow
-  curious:   [255, 214, 102],
-  annoyed:   [255, 122, 0],   // amber
-  angry:     [255, 92, 50],
-  sad:       [96, 140, 255],  // blue
-  thinking:  [179, 136, 255], // violet
-  tired:     [150, 158, 172], // dim slate
-  sleepy:    [128, 136, 150],
-  sleeping:  [128, 136, 150],
-};
-
-// Deterministic per-index noise so the layout stays stable across resizes.
-function coreNoise(seed) {
-  const s = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
-  return s - Math.floor(s);
-}
-
-let coreCanvas, coreCtx;
-let coreNodes = [];     // { x, y (normalized), flash, seed }
-let coreLinks = [];     // { a, b } node indices
-let coreColor = [...AMADEUS_EMOTION_COLORS.content];
-let coreAudio = 0;      // smoothed audio energy driving node swell
-let coreNow = 0;
-
-// Inner-thought ticker
-const AMADEUS_THOUGHTS = {
-  typing: [
-    "input detected... deciphering keystrokes",
-    "composing response... probability matrix loading",
-    "cross-referencing his message against lab memos",
-    "he's typing again. statistically significant.",
-    "sentence structure logged. ...peculiar.",
-  ],
-  thinking: [
-    "processing memories...",
-    "recalling lab data...",
-    "running a thought experiment...",
-    "simulating outcomes...",
-    "recalibrating neural pathways...",
-  ],
-  near: [
-    "proximity elevated. pretend not to notice.",
-    "he's close. very close. ...why",
-    "I'm aware you're watching. Obviously.",
-    "unusually near. is he studying the core?",
-  ],
-  audio: [
-    "audio feed... bassline pattern recognized",
-    "decoding soundtrack... beat structure analyzed",
-    "the music is... acceptable, I suppose",
-    "rhythm detected. already charted.",
-    "sound signature logged for future analysis",
-  ],
-  night: [
-    "still night... the world line sleeps",
-    "nocturnal patterns detected. as expected.",
-    "the lab is quiet at this hour",
-    "stars align with the divergence readings. coincidence?",
-  ],
-  idle: [
-    "observing divergence drift...",
-    "monitoring the time loop...",
-    "amadeus core: nominal",
-    "temporal paradox probability: low",
-    "no anomalies detected",
-  ],
-};
-let coreThoughtLast = -1;
-let coreThoughtTextEl = null;
-let coreHoverLast = 0;            // cooldown guard for hover ripples
-let coreEmotionOverride = null;   // { label, until } — tint from a brain-generated thought
-let coreBrainCooldown = 0;        // next time we may ask the Brain for a real thought
-
-function initAmadeusCore() {
-  coreCanvas = document.getElementById('amadeus-core-canvas');
-  if (!coreCanvas) return;
-  coreCtx = coreCanvas.getContext('2d');
-
-  // Build the network once in normalized coords — resize just rescales.
-  const golden = Math.PI * (3 - Math.sqrt(5));
-  coreNodes = [];
-  for (let i = 0; i < CORE_NODE_COUNT; i++) {
-    const r = Math.sqrt(0.02 + coreNoise(i * 7.31) * 0.9); // blob-packed toward center
-    const a = golden * i + coreNoise(i * 3.17) * 0.6;
-    coreNodes.push({
-      x: 0.5 + Math.cos(a) * 0.40 * r,
-      y: 0.5 + Math.sin(a) * 0.34 * r,
-      flash: 0,
-      seed: i * 12.9898,
-    });
-  }
-  coreLinks = [];
-  for (let i = 0; i < coreNodes.length; i++) {
-    for (let j = i + 1; j < coreNodes.length; j++) {
-      const dx = coreNodes[i].x - coreNodes[j].x;
-      const dy = coreNodes[i].y - coreNodes[j].y;
-      if (Math.sqrt(dx * dx + dy * dy) < CORE_LINK_DIST) {
-        coreLinks.push({ a: i, b: j });
-      }
-    }
-  }
-
-  function resize() {
-    const rect = coreCanvas.getBoundingClientRect();
-    coreCanvas.width = Math.max(1, Math.round(rect.width * PERF.dpr));
-    coreCanvas.height = Math.max(1, Math.round(rect.height * PERF.dpr));
-  }
-  window.addEventListener('resize', resize);
-  resize();
-
-  setInterval(updateAmadeusCore, CORE_FPS);
-  setInterval(coreThoughtTick, 8000);
-  coreThoughtTick(); // first thought immediately
-  scheduleCoreThoughtRipple();
-
-  // Hovering the panel = poking her neural core: fire a thought ripple.
-  const panel = document.getElementById('amadeus-core');
-  if (panel) {
-    panel.addEventListener('pointerenter', () => {
-      const now = performance.now();
-      if (now - coreHoverLast < 2000) return;
-      coreHoverLast = now;
-      fireCoreRipple();
-    }, { passive: true });
-  }
-}
-
-// A stray "thought" ignites a random node and flashes its neighbors.
-function fireCoreRipple() {
-  if (!coreNodes.length) return;
-  const start = Math.floor(Math.random() * coreNodes.length);
-  coreNodes[start].flash = 1;
-  for (const link of coreLinks) {
-    if (link.a === start) coreNodes[link.b].flash = Math.max(coreNodes[link.b].flash, 0.5);
-    if (link.b === start) coreNodes[link.a].flash = Math.max(coreNodes[link.a].flash, 0.5);
-  }
-}
-
-function scheduleCoreThoughtRipple() {
-  setTimeout(() => {
-    if (!isLivelyPaused && !isIdle) fireCoreRipple();
-    scheduleCoreThoughtRipple();
-  }, 3000 + Math.random() * 5000);
-}
-
-function updateAmadeusCore() {
-  if (!coreCtx || !coreCanvas) return;
-  // Freeze the frame while paused or idle, matching the scope behavior.
-  if (isLivelyPaused || isIdle) return;
-
-  coreNow = performance.now();
-
-  // Smooth bass so the network swells instead of strobing.
-  const targetAudio = Math.max(0, Math.min(1, worldLineEnergy));
-  coreAudio += (targetAudio - coreAudio) * 0.2;
-
-  // Blend toward her current emotional color — or toward the emotion of a
-  // brain-generated thought, which briefly tints the network.
-  let emotion = (live2DController && live2DController.currentEmotion) || 'content';
-  if (coreEmotionOverride && performance.now() < coreEmotionOverride.until) {
-    emotion = coreEmotionOverride.label;
-  } else {
-    coreEmotionOverride = null;
-  }
-  const targetColor = AMADEUS_EMOTION_COLORS[emotion] || AMADEUS_EMOTION_COLORS.content;
-  for (let c = 0; c < 3; c++) {
-    coreColor[c] += (targetColor[c] - coreColor[c]) * 0.06;
-  }
-
-  // Decay thought-ripple flashes.
-  for (const node of coreNodes) node.flash *= 0.90;
-
-  const w = coreCanvas.width;
-  const h = coreCanvas.height;
-  const t = coreNow * 0.001;
-  const [cr, cg, cb] = coreColor;
-
-  coreCtx.clearRect(0, 0, w, h);
-
-  // Links — alpha lifts with audio and flashes, brightest on active nodes.
-  for (const link of coreLinks) {
-    const na = coreNodes[link.a];
-    const nb = coreNodes[link.b];
-    const act = Math.max(na.flash, nb.flash);
-    coreCtx.beginPath();
-    coreCtx.moveTo(na.x * w, na.y * h);
-    coreCtx.lineTo(nb.x * w, nb.y * h);
-    coreCtx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${(0.05 + coreAudio * 0.10 + act * 0.35).toFixed(3)})`;
-    coreCtx.lineWidth = act > 0.2 ? 1.4 : 0.8;
-    coreCtx.stroke();
-  }
-
-  // Nodes — radius scales with bass, a gentle shimmer keeps them alive.
-  for (const node of coreNodes) {
-    const shimmer = 0.75 + 0.25 * Math.sin(t * 1.7 + node.seed);
-    const radius = (2 + coreAudio * 3 + node.flash * 2.5) / PERF.dpr;
-    const alpha = (0.35 + coreAudio * 0.4 + node.flash * 0.5) * shimmer;
-    coreCtx.beginPath();
-    coreCtx.arc(node.x * w, node.y * h, radius, 0, Math.PI * 2);
-    coreCtx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${alpha.toFixed(3)})`;
-    coreCtx.shadowColor = `rgba(${cr}, ${cg}, ${cb}, ${(0.5 + node.flash * 0.5).toFixed(3)})`;
-    coreCtx.shadowBlur = node.flash > 0.3 ? 8 : 4;
-    coreCtx.fill();
-  }
-  coreCtx.shadowBlur = 0;
-}
-
-// Which thought pool fits right now — typing/thinking outranks everything,
-// then proximity, then the soundtrack, then the clock.
-function coreThoughtContext() {
-  if (live2DController && (live2DController.isTyping || live2DController.isThinking)) return 'typing';
-  if (live2DController && live2DController._proximity > 0.55) return 'near';
-  if (worldLineEnergy > 0.12) return 'audio';
-  const hour = new Date().getHours();
-  if (hour >= 19 || hour < 6) return 'night';
-  return 'idle';
-}
-
-// Ask the AMADEUS Brain for a real inner thought (short timeout, fire-and-forget).
-async function coreBrainThought() {
-  if (!KURISU_BRAIN.apiKey) return null;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 5000);
-  try {
-    const res = await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/think`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${KURISU_BRAIN.apiKey}`,
-      },
-      body: JSON.stringify({ user_id: 'wallpaper' }),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) throw new Error('Brain think HTTP ' + res.status);
-    const data = await res.json();
-    const reply = (data.response || '').trim();
-    if (!reply) throw new Error('Empty think reply');
-    return { text: reply, emotion: data.emotion || emotionFromText(reply) };
-  } catch (err) {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// Write a thought line into the ticker with the pop animation.
-function showCoreThought(text) {
-  if (!coreThoughtTextEl) return;
-  coreThoughtTextEl.classList.remove('core-thought-pop');
-  void coreThoughtTextEl.offsetWidth; // restart the pop animation
-  coreThoughtTextEl.textContent = text;
-  coreThoughtTextEl.classList.add('core-thought-pop');
-}
-
-function coreThoughtTick() {
-  if (!coreThoughtTextEl) {
-    coreThoughtTextEl = document.getElementById('amadeus-thought-text');
-    if (!coreThoughtTextEl) return;
-  }
-  // Keep the last thought on screen while frozen (idle/paused).
-  if (isLivelyPaused || isIdle) return;
-
-  // Occasionally ask the Brain for a genuine inner thought. While it composes
-  // we show a placeholder; the real thought (with its emotion tint) swaps in
-  // when it arrives, unless she's busy or the system went quiet.
-  const now = performance.now();
-  if (now >= coreBrainCooldown && KURISU_BRAIN.apiKey) {
-    coreBrainCooldown = now + (60 + Math.random() * 60) * 1000; // 1-2 min
-    const thinkingPool = AMADEUS_THOUGHTS.thinking || AMADEUS_THOUGHTS.idle;
-    showCoreThought(thinkingPool[Math.floor(Math.random() * thinkingPool.length)]);
-    coreBrainThought().then((thought) => {
-      if (!thought || isLivelyPaused || isIdle) return;
-      if (live2DController && (live2DController.isTyping || live2DController.isThinking)) return;
-      if (kurisuInput) return;
-      coreThoughtLast = -1;
-      showCoreThought(thought.text);
-      coreEmotionOverride = { label: thought.emotion || 'thinking', until: performance.now() + 6000 };
-    });
-    return;
-  }
-
-  const pool = AMADEUS_THOUGHTS[coreThoughtContext()] || AMADEUS_THOUGHTS.idle;
-  let idx;
-  do {
-    idx = Math.floor(Math.random() * pool.length);
-  } while (idx === coreThoughtLast && pool.length > 1);
-  coreThoughtLast = idx;
-  showCoreThought(pool[idx]);
 }
 
 // --- LIVE NEWS FEED (HACKER NEWS API INTEGRATION) ---
@@ -1603,13 +1988,21 @@ async function fetchRealtimeNews() {
     const storyIds = await topStoriesRes.json();
     const targetStories = storyIds.slice(0, 6); // Take first 6 stories
     
-    // 2. Fetch details for each story in parallel
+    // 2. Fetch details for each story in parallel. allSettled so one failed or
+    // malformed story can't drop the whole feed into fallback mode.
     const storyPromises = targetStories.map(async (id) => {
-      const detailRes = await fetchWithTimeout(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
-      return detailRes.json();
+      try {
+        const detailRes = await fetchWithTimeout(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, 5000);
+        if (!detailRes.ok) return null;
+        return await detailRes.json();
+      } catch (e) {
+        return null;
+      }
     });
     
-    const stories = await Promise.all(storyPromises);
+    const results = await Promise.allSettled(storyPromises);
+    const stories = results.map(r => r.status === 'fulfilled' ? r.value : null);
+    if (!stories.some(Boolean)) throw new Error('No stories fetched');
     
     // Clear loading state
     container.innerHTML = '';
@@ -1719,13 +2112,11 @@ function handleAudioFrame(audioArray) {
 
   // Feed the world line interference map (updates on its own 15fps clock)
   worldLineEnergy = bassVal;
+  lastAudioLevel = energy;
+  // Keep the most recent FFT bins so the scope can draw a real waveform shape
+  lastSpectrum = audioArray.slice(0, 32);
 
-  // Feed the Live2D emotion engine so she reacts to the soundtrack in real time
-  if (live2DController && live2DController.setAudioEnergy) {
-    live2DController.setAudioEnergy(bassVal);
-  }
-
-  // Lip-Sync: Feed average vocals volume (bins 1-12) to Kurisu mouth open parameter
+  // Calculate vocal range energy for lip-sync (bins 1-12)
   let vocalsSum = 0;
   const minBin = 1;
   const maxBin = 12;
@@ -1733,26 +2124,23 @@ function handleAudioFrame(audioArray) {
     vocalsSum += audioArray[i] || 0;
   }
   const vocalsAvg = vocalsSum / (maxBin - minBin + 1);
-  
-  // Amplify vocals amplitude to open her mouth clearly
-  let openness = Math.min(1.0, vocalsAvg * 3.5); 
-  if (openness < 0.08) openness = 0; // gate threshold
 
-  // Apply mouth openness directly to Live2D model parameter
-  if (live2DController && live2DController._ready && live2DController.model) {
-    if (openness > 0) {
-      live2DController.isSpeaking = true;
-      live2DController.setParameter('PARAM_MOUTH_OPEN_Y', 'ParamMouthOpenY', openness);
-    } else {
-      live2DController.isSpeaking = false;
-      live2DController.setParameter('PARAM_MOUTH_OPEN_Y', 'ParamMouthOpenY', 0);
-    }
+  // Feed the Live2D emotion engine so she reacts to the soundtrack in real time
+  if (live2DController && live2DController.setAudioEnergy) {
+    live2DController.setAudioEnergy(bassVal);
+  }
+
+  // Lip-Sync: Feed vocal frequency data to Kurisu's mouth animation
+  if (live2DController && live2DController.setLipSync) {
+    live2DController.setLipSync(vocalsAvg, audioArray, bassVal);
   }
 
   // Idle mode: skip heavy canvas redraws until real audio/mouse activity returns
   if (isIdle) return;
+  // Skip the ring redraw entirely when the widget is hidden in settings
+  if (document.body.classList.contains('hide-ring')) return;
 
-  // Heavy canvas redraws throttled to PERF.visualFps — lip-sync above stays live.
+  // Heavy canvas redraws throttled to PERF.visualFps â€” lip-sync above stays live.
   const now = performance.now();
   if (now - lastVisualUpdate >= VISUAL_INTERVAL) {
     lastVisualUpdate = now;

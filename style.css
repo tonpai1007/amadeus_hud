@@ -1,19 +1,29 @@
 /* style.css - AMADEUS Convergence Sync HUD Theme */
 
 :root {
-  /* Color Palette - Crimson AMADEUS Convergence */
-  --bg-dark: #050102;
-  --primary-pink: #e60026;
-  --primary-pink-rgb: 230, 0, 38;
-  --accent-cyan: #ff4d6d;
-  --accent-cyan-rgb: 255, 77, 109;
-  --accent-violet: #ff9f1c;
-  --accent-violet-rgb: 255, 159, 28;
-  --nixie-amber: #ff5500;
-  --nixie-amber-rgb: 255, 85, 0;
+  /* Color Palette - Unified AMADEUS red theme. All accent tokens use red/pink
+     family to match source material; the warm nixie amber is the single
+     authentic Steins;Gate counterpoint and the live emotion tint can shift
+     the whole hue. */
+  --bg-dark: #05060d;
+  --primary-pink: #ff2c35;
+  --primary-pink-rgb: 255, 44, 53;
+  --accent-cyan: #ff4d55;
+  --accent-cyan-rgb: 255, 77, 85;
+  --accent-violet: #ff55aa;
+  --accent-violet-rgb: 255, 85, 170;
+  --nixie-amber: #ff8b3d;
+  --nixie-amber-rgb: 255, 139, 61;
   --text-main: #f5f6f8;
-  --text-muted: #a49195;
-  
+  --text-muted: #a4b6c4;
+
+  /* Emotion-reactive HUD accent (neutral = Amadeus crimson). wallpaper.js
+     blends these toward Kurisu's current emotion hue every frame. */
+  --hud-emote-r: 204;
+  --hud-emote-g: 50;
+  --hud-emote-b: 53;
+  --hud-emote-glow: 0.35;
+
   /* Font Family definitions */
   --font-hud: 'Orbitron', sans-serif;
   --font-mono: 'Share Tech Mono', monospace;
@@ -28,7 +38,13 @@
 }
 
 body {
-  background: radial-gradient(circle at center, #1f0204 0%, #080001 75%, #000000 100%);
+  /* Day is the default scene; period classes swap the variables below. */
+  --scene-bg: #0a1626;
+  --scene-glow: #123a52;
+  --scene-brightness: 1;
+  --scene-sat: 1;
+  --scene-hue: 0deg;
+  background: radial-gradient(circle at 50% 60%, var(--scene-glow) 0%, var(--scene-bg) 70%, #000000 100%);
   color: var(--text-main);
   font-family: var(--font-body);
   height: 100vh;
@@ -36,12 +52,43 @@ body {
   overflow: hidden;
   position: relative;
   /* Time-of-day ambience fades smoothly instead of snapping */
-  transition: filter 2.5s ease;
+  transition: filter 2.5s ease, background 2.5s ease;
+  filter: brightness(var(--scene-brightness)) saturate(var(--scene-sat)) hue-rotate(var(--scene-hue)) contrast(1.02);
 }
 
-/* Night ops: colder, dimmer HUD between 19:00 and 06:00 */
+/* Scene periods: dawn (05-07), day (08-15), dusk (16-18), night (19-04).
+   Subtle hue/brightness drift over real local time. */
+body.dawn-mode {
+  --scene-bg: #0d1a2e;
+  --scene-glow: #1c4860;
+  --scene-brightness: 0.92;
+  --scene-sat: 1.04;
+  --scene-hue: -4deg;
+}
+
+body.day-mode {
+  --scene-bg: #12263a;
+  --scene-glow: #1e5a78;
+  --scene-brightness: 1;
+  --scene-sat: 1;
+  --scene-hue: 0deg;
+}
+
+body.dusk-mode {
+  --scene-bg: #101d33;
+  --scene-glow: #274a72;
+  --scene-brightness: 0.9;
+  --scene-sat: 1.04;
+  --scene-hue: 6deg;
+}
+
+/* Night ops: colder, dimmer HUD between 19:00 and 04:00 */
 body.night-mode {
-  filter: brightness(0.8) saturate(0.85) hue-rotate(10deg) contrast(1.03);
+  --scene-bg: #050a14;
+  --scene-glow: #0e2547;
+  --scene-brightness: 0.8;
+  --scene-sat: 0.9;
+  --scene-hue: 8deg;
 }
 
 /* Background Canvas Layouts */
@@ -76,8 +123,8 @@ body.night-mode {
   pointer-events: none;
   background: radial-gradient(
     ellipse 55% 42% at 50% 46%,
-    rgba(126, 211, 250, 0.10) 0%,
-    rgba(126, 211, 250, 0.05) 45%,
+    rgba(204, 50, 53, 0.10) 0%,
+    rgba(204, 50, 53, 0.05) 45%,
     transparent 75%
   );
 }
@@ -96,17 +143,18 @@ body.night-mode {
   filter: blur(3px);
 }
 
-/* Kurisu Speech Bubble */
+/* Kurisu Speech Bubble — border follows her current emotion hue */
 .kurisu-bubble {
   position: absolute;
   display: none;
   max-width: 340px;
   z-index: 800;
   background: rgba(10, 10, 18, 0.92);
-  border: 1px solid rgba(126, 211, 250, 0.35);
+  border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.4);
   border-radius: 8px;
   padding: 10px 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 0 12px rgba(126, 211, 250, 0.06);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6),
+    inset 0 0 12px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.08);
   pointer-events: auto;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -127,8 +175,8 @@ body.night-mode {
   width: 12px;
   height: 12px;
   background: rgba(10, 10, 18, 0.92);
-  border-right: 1px solid rgba(126, 211, 250, 0.35);
-  border-bottom: 1px solid rgba(126, 211, 250, 0.35);
+  border-right: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.4);
+  border-bottom: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.4);
   transform: rotate(45deg);
 }
 
@@ -184,14 +232,70 @@ body.night-mode {
     rgba(0, 0, 0, 0.25) 50%
   ), linear-gradient(
     90deg,
-    rgba(230, 0, 38, 0.04),
-    rgba(0, 255, 0, 0.01),
-    rgba(230, 0, 38, 0.03)
+    rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.04),
+    rgba(255, 77, 85, 0.01),
+    rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.03)
   );
   background-size: 100% 4px, 6px 100%;
   z-index: 999;
   pointer-events: none;
   opacity: 0.55;
+}
+
+/* Unified CRT finish: corner vignette + soft bloom so every panel and the
+   Live2D stage sit inside the same tube. Kept under the scanlines. */
+.vignette-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 997;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 50%, transparent 58%, rgba(0, 0, 0, 0.5) 100%);
+  mix-blend-mode: multiply;
+}
+
+.bloom-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 998;
+  pointer-events: none;
+  /* Center bloom follows Kurisu's current emotion hue so the whole tube
+     shares the same mood as the HUD chrome. */
+  background:
+    radial-gradient(ellipse 46% 36% at 50% 46%, rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.07), transparent 72%);
+  mix-blend-mode: screen;
+}
+
+/* Authentic CRT tube: rounded-grill barrel shading + faint phosphor dot grid
+   + soft chromatic fringing at the edges. Sits just under the scanlines so
+   the whole desktop reads as one screen. */
+.crt-curve {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 996;
+  pointer-events: none;
+  border-radius: 2.6% / 2.4%;
+  background:
+    radial-gradient(ellipse at center, transparent 62%, rgba(5, 14, 30, 0.30) 96%, rgba(0, 0, 0, 0.6) 100%),
+    linear-gradient(90deg, rgba(255, 60, 120, 0.045), transparent 9%, transparent 91%, rgba(60, 160, 255, 0.045));
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.35);
+}
+
+.crt-curve::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(140, 210, 255, 0.05) 0.7px, transparent 1.1px);
+  background-size: 3px 3px;
+  mix-blend-mode: overlay;
 }
 
 /* World Line Shift FX (triggered on click) */
@@ -244,9 +348,9 @@ body.world-line-shifting .glitch-overlay {
   left: 0;
   width: 100%;
   height: 100%;
-  background-image: 
-    linear-gradient(rgba(230, 0, 38, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(230, 0, 38, 0.02) 1px, transparent 1px);
+   background-image: 
+     linear-gradient(rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.022) 1px, transparent 1px),
+     linear-gradient(90deg, rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.022) 1px, transparent 1px);
   background-size: 50px 50px;
   background-position: center;
   z-index: 3;
@@ -266,32 +370,45 @@ body.world-line-shifting .glitch-overlay {
   padding: 20px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;
   gap: 20px;
   pointer-events: none; /* Let clicks pass to desktop if wallpaper */
 }
 
 /* HUD Panel Base - Glassmorphic */
 .hud-panel {
+  position: relative;
   pointer-events: auto; /* Re-enable pointer events for panels to allow scrolling/hovering */
   background: rgba(10, 10, 18, 0.75);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  border: 1px solid rgba(0, 212, 255, 0.15);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.18);
+  border-radius: 10px;
   padding: 16px;
   cursor: pointer;
   box-shadow: 
     0 8px 32px 0 rgba(0, 0, 0, 0.5),
-    inset 0 0 12px rgba(0, 212, 255, 0.05);
+    inset 0 0 12px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.06);
   transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.25s ease;
 }
 
+/* Shared inner CRT depth: consistent inset glow + sheen across every panel */
+.hud-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 24px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
 .hud-panel:hover {
-  border-color: rgba(0, 212, 255, 0.35);
+  border-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.5);
   box-shadow: 
     0 8px 32px 0 rgba(0, 0, 0, 0.6),
-    inset 0 0 20px rgba(0, 212, 255, 0.1);
+    inset 0 0 20px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.14);
   transform: translateY(-2px);
 }
 
@@ -330,12 +447,12 @@ body.world-line-shifting .glitch-overlay {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background-color: var(--accent-cyan);
-  box-shadow: 0 0 8px var(--accent-cyan);
+  background-color: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
+  box-shadow: 0 0 8px rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
 }
 
 .status-indicator.online {
-  color: var(--accent-cyan);
+  color: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
 }
 
 .status-indicator.online::before {
@@ -346,11 +463,11 @@ body.world-line-shifting .glitch-overlay {
 @keyframes pulse-glow {
   0% {
     opacity: 0.4;
-    box-shadow: 0 0 2px var(--accent-cyan);
+    box-shadow: 0 0 2px rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
   }
   100% {
     opacity: 1;
-    box-shadow: 0 0 10px var(--accent-cyan);
+    box-shadow: 0 0 10px rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
   }
 }
 
@@ -472,7 +589,7 @@ body.world-line-shifting .glitch-overlay {
 .np-track {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--accent-cyan);
+  color: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -487,6 +604,58 @@ body.world-line-shifting .glitch-overlay {
   text-overflow: ellipsis;
 }
 
+/* Pet Mode toggle */
+.pet-toggle {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  background: rgba(15, 18, 27, 0.6);
+  border: 1px dashed rgba(138, 159, 196, 0.25);
+  cursor: pointer;
+  font-family: var(--font-hud);
+  font-size: 8px;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.pet-toggle:hover {
+  border-color: var(--accent-cyan);
+  color: var(--text-main);
+}
+
+.pet-toggle .pet-toggle-led {
+  width: 6px;
+  height: 6px;
+  background: var(--text-muted);
+  transform: rotate(45deg);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.pet-toggle.active .pet-toggle-led {
+  background: var(--accent-cyan);
+  box-shadow: 0 0 6px var(--accent-cyan);
+}
+
+.pet-toggle.active {
+  border-style: solid;
+  border-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.5);
+  color: var(--accent-cyan);
+}
+
+.pet-toggle .pet-toggle-state {
+  margin-left: auto;
+  font-size: 8px;
+  letter-spacing: 1px;
+}
+
+.pet-toggle.active .pet-toggle-state {
+  color: var(--accent-cyan);
+}
+
 /* PANEL: AMADEUS Cognitive Core (Top-Right) */
 .top-right-panel {
   grid-column: 2;
@@ -494,72 +663,16 @@ body.world-line-shifting .glitch-overlay {
   justify-self: end;
   align-self: start;
   width: 380px;
-  border-color: rgba(126, 211, 250, 0.18);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), inset 0 0 12px rgba(126, 211, 250, 0.04);
+  border-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.18);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), inset 0 0 12px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.04);
 }
 
 .top-right-panel:hover {
-  border-color: rgba(126, 211, 250, 0.45);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(126, 211, 250, 0.09);
+  border-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.45);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.09);
 }
 
-/* Neural-core canvas + inner-thought ticker */
-.amadeus-core {
-  position: relative;
-  border: 1px solid rgba(126, 211, 250, 0.22);
-  border-radius: 4px;
-  background:
-    radial-gradient(circle at 50% 45%, rgba(126, 211, 250, 0.10), transparent 70%),
-    rgba(2, 4, 10, 0.6);
-  overflow: hidden;
-}
-
-#amadeus-core-canvas {
-  display: block;
-  width: 100%;
-  height: 130px;
-}
-
-.core-thought {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 6px 10px;
-  border-top: 1px dashed rgba(138, 159, 196, 0.2);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 1px;
-  color: var(--text-main);
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.core-thought-label {
-  font-family: var(--font-hud);
-  font-size: 8px;
-  font-weight: 700;
-  color: var(--text-muted);
-  letter-spacing: 2px;
-  flex-shrink: 0;
-}
-
-.core-thought-text {
-  color: rgba(126, 211, 250, 0.9);
-  text-shadow: 0 0 6px rgba(126, 211, 250, 0.4);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.core-thought-text.core-thought-pop {
-  animation: core-thought-in 0.35s ease-out;
-}
-
-@keyframes core-thought-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* World Line Interference Map (audio-reactive particle constellation) */
+/* Phosphor Oscilloscope (top-right panel) */
 .world-line-monitor {
   margin-top: 12px;
   border-top: 1px dashed rgba(138, 159, 196, 0.2);
@@ -569,12 +682,12 @@ body.world-line-shifting .glitch-overlay {
 .world-line-frame {
   position: relative;
   height: 160px;
-  border: 1px solid rgba(126, 211, 250, 0.22);
+  border: 1px solid rgba(57, 255, 122, 0.25);
   border-radius: 4px;
   background:
-    radial-gradient(circle at 50% 50%, rgba(126, 211, 250, 0.09), transparent 70%),
-    linear-gradient(rgba(126, 211, 250, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(126, 211, 250, 0.05) 1px, transparent 1px),
+    radial-gradient(circle at 50% 50%, rgba(57, 255, 122, 0.07), transparent 70%),
+    linear-gradient(rgba(57, 255, 122, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(57, 255, 122, 0.05) 1px, transparent 1px),
     rgba(2, 4, 10, 0.6);
   background-size: 100% 100%, 26px 26px, 26px 26px, 100% 100%;
   overflow: hidden;
@@ -596,19 +709,14 @@ body.world-line-shifting .glitch-overlay {
   color: var(--text-muted);
 }
 
-#wl-delta {
-  color: rgba(255, 122, 0, 0.95);
-  text-shadow: 0 0 6px rgba(255, 122, 0, 0.6);
+#wl-audio {
+  color: rgba(57, 255, 122, 0.95);
+  text-shadow: 0 0 6px rgba(57, 255, 122, 0.6);
 }
 
 #wl-mind {
   color: rgba(179, 136, 255, 0.95);
   text-shadow: 0 0 6px rgba(179, 136, 255, 0.6);
-}
-
-#wl-attractor {
-  color: rgba(255, 122, 0, 0.85);
-  text-shadow: 0 0 6px rgba(255, 122, 0, 0.5);
 }
 
 /* PANEL: Center HUD Banner */
@@ -678,6 +786,7 @@ body.world-line-shifting .glitch-overlay {
   grid-column: 1;
   grid-row: 3;
   align-self: end;
+  justify-self: start;
 }
 
 .bottom-left-panel .panel-body {
@@ -700,17 +809,17 @@ body.world-line-shifting .glitch-overlay {
   background: transparent;
 }
 .news-container::-webkit-scrollbar-thumb {
-  background: rgba(230, 0, 38, 0.2);
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.2);
   border-radius: 1px;
 }
 .news-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(230, 0, 38, 0.5);
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.5);
 }
 
 .news-loading {
   font-family: var(--font-mono);
   font-size: 11.5px;
-  color: var(--accent-cyan);
+  color: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
   animation: scan-flicker 0.15s infinite alternate;
 }
 
@@ -724,7 +833,7 @@ body.world-line-shifting .glitch-overlay {
 }
 
 .news-item:hover {
-  background: rgba(230, 0, 38, 0.04);
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.04);
 }
 
 .news-title {
@@ -738,7 +847,7 @@ body.world-line-shifting .glitch-overlay {
 }
 
 .news-item:hover .news-title {
-  color: var(--accent-cyan);
+  color: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
 }
 
 .news-meta {
@@ -758,12 +867,291 @@ body.world-line-shifting .glitch-overlay {
   font-family: var(--font-hud);
   font-size: 9px;
   font-weight: 900;
-  color: var(--primary-pink);
+  letter-spacing: 1px;
+  color: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
+  text-shadow: 0 0 8px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.55);
   animation: blink-fast 1s infinite steps(2, start);
 }
 
 @keyframes blink-fast {
   to { visibility: hidden; }
+}
+
+/* --- CHAT TERMINAL (bottom-center) --- */
+.chat-panel {
+  grid-column: 1 / span 2;
+  grid-row: 4;
+  place-self: end center;
+  width: 460px;
+  max-width: 92vw;
+  cursor: default;
+  /* Clear the Windows taskbar (~48px) so the input stays clickable */
+  margin-bottom: 48px;
+}
+
+.chat-log {
+  height: 168px;
+  overflow-y: auto;
+  padding: 4px 4px 4px 0;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-log::-webkit-scrollbar {
+  width: 3px;
+}
+.chat-log::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-log::-webkit-scrollbar-thumb {
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.25);
+  border-radius: 1px;
+}
+
+.chat-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  max-width: 96%;
+  animation: bubble-in 0.15s ease-out;
+}
+
+.chat-entry.user {
+  align-self: flex-end;
+  text-align: right;
+}
+
+.chat-entry.assistant {
+  align-self: flex-start;
+}
+
+.chat-entry .chat-meta {
+  font-family: var(--font-hud);
+  font-size: 8px;
+  letter-spacing: 1.5px;
+  opacity: 0.8;
+}
+
+.chat-entry.user .chat-meta {
+  color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.9);
+}
+
+.chat-entry.user .chat-body {
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.1);
+  border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.3);
+  border-radius: 8px 8px 2px 8px;
+  padding: 6px 9px;
+  color: var(--text-main);
+}
+
+.chat-entry.assistant .chat-meta {
+  color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.9);
+}
+
+.chat-entry.assistant .chat-body {
+  background: rgba(12, 14, 24, 0.8);
+  border: 1px solid rgba(138, 159, 196, 0.25);
+  border-radius: 8px 8px 8px 2px;
+  padding: 6px 9px;
+  color: var(--text-main);
+}
+
+/* "…" thinking row while Kurisu is generating a reply */
+.chat-entry.assistant .chat-body.pending {
+  font-family: var(--font-mono);
+  color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.9);
+  animation: pending-blink 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes pending-blink {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+/* Source badge: shows which brain tier produced the reply */
+.chat-entry .chat-source {
+  font-family: var(--font-hud);
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  vertical-align: 1px;
+}
+
+.chat-source.src-brain {
+  color: #ff4d55;
+  background: rgba(255, 77, 85, 0.12);
+  border: 1px solid rgba(255, 77, 85, 0.35);
+}
+.chat-source.src-cloud {
+  color: #ff55aa;
+  background: rgba(255, 85, 170, 0.12);
+  border: 1px solid rgba(255, 85, 170, 0.35);
+}
+.chat-source.src-llm {
+  color: #b388ff;
+  background: rgba(179, 136, 255, 0.12);
+  border: 1px solid rgba(179, 136, 255, 0.35);
+}
+.chat-source.src-canned {
+  color: #ffb14d;
+  background: rgba(255, 177, 77, 0.12);
+  border: 1px solid rgba(255, 177, 77, 0.35);
+}
+.chat-source.src-history {
+  color: var(--text-muted);
+  background: rgba(164, 145, 149, 0.1);
+  border: 1px solid rgba(164, 145, 149, 0.3);
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-main);
+  background: rgba(8, 10, 18, 0.85);
+  border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.3);
+  border-radius: 5px;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.chat-input:focus {
+  border-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.7);
+  box-shadow: 0 0 14px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.18);
+}
+
+.chat-send {
+  font-family: var(--font-hud);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: #050102;
+  background: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
+  border: none;
+  border-radius: 5px;
+  padding: 0 14px;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.1s ease;
+}
+
+.chat-send:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+.chat-send:active {
+  transform: translateY(1px);
+}
+
+.chat-uplink.online {
+  color: #ff4d55 !important;
+  text-shadow: 0 0 8px rgba(255, 77, 85, 0.6) !important;
+}
+
+.chat-uplink.offline {
+  color: #ffb14d !important;
+  text-shadow: 0 0 8px rgba(255, 177, 77, 0.6) !important;
+}
+
+.chat-uplink.thinking {
+  color: #b388ff !important;
+  text-shadow: 0 0 8px rgba(179, 136, 255, 0.6) !important;
+}
+
+/* --- SETTINGS PANEL (bottom-right) --- */
+.settings-panel {
+  grid-column: 2;
+  grid-row: 3;
+  justify-self: end;
+  align-self: end;
+  width: 300px;
+  cursor: default;
+  max-height: 78vh;
+  overflow: hidden auto;
+  /* Clear the Windows taskbar like the chat panel */
+  margin-bottom: 48px;
+}
+
+.settings-header {
+  cursor: pointer;
+  margin-bottom: 0;
+}
+
+.settings-body {
+  margin-top: 12px;
+}
+
+.settings-group {
+  margin-bottom: 12px;
+}
+
+.settings-title {
+  font-family: var(--font-hud);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+  border-bottom: 1px dashed rgba(138, 159, 196, 0.2);
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-main);
+}
+
+.setting-row input[type="checkbox"] {
+  accent-color: var(--primary-pink);
+  width: 15px;
+  height: 15px;
+}
+
+.setting-row input[type="range"] {
+  width: 120px;
+  accent-color: var(--primary-pink);
+  cursor: pointer;
+}
+
+.setting-row input[type="color"] {
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+/* Widget visibility toggles driven by the settings panel */
+body.hide-scope .top-right-panel,
+body.hide-news .bottom-left-panel,
+body.hide-clock .top-left-panel,
+body.hide-chat .chat-panel,
+body.hide-ring #audio-canvas,
+body.hide-crt .crt-overlay,
+body.hide-crt .crt-curve,
+body.hide-crt .vignette-overlay,
+body.hide-crt .bloom-overlay {
+  display: none;
 }
 
 /* IDLE POWER-DOWN: when the system is silent and the mouse inactive, fade the
@@ -782,6 +1170,15 @@ body.idle .crt-overlay {
   opacity: 0.2;
 }
 
+body.idle .crt-curve {
+  opacity: 0.4;
+}
+
+body.idle .vignette-overlay,
+body.idle .bloom-overlay {
+  opacity: 0.35;
+}
+
 body.idle .grid-overlay {
   opacity: 0.15;
 }
@@ -789,8 +1186,7 @@ body.idle .grid-overlay {
 body.idle .center-banner,
 body.idle .pulse-circle,
 body.idle .pulse-text,
-body.idle .status-indicator.online::before,
-body.idle .core-thought-text {
+body.idle .status-indicator.online::before {
   animation-play-state: paused;
 }
 
@@ -800,7 +1196,6 @@ body.idle .core-thought-text {
   .pulse-circle,
   .pulse-text,
   .status-indicator.online::before,
-  .core-thought-text,
   .news-loading,
   .clock-tube.tube-pop {
     animation: none !important;
@@ -821,6 +1216,9 @@ body.idle .core-thought-text {
   }
   .bottom-left-panel {
     height: 150px;
+  }
+  .chat-log {
+    height: 100px;
   }
   .center-banner {
     display: none;

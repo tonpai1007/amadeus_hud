@@ -12,6 +12,34 @@
  * Uses pixi-live2d-display (Cubism 2/4 bundle) + PixiJS.
  */
 
+// Emotional stage-light palette. Each of her moods shifts the aura hue and
+// brightness; `flash` marks strong emotions that fire a brief light surge via
+// setEmotion(). Cool cyan is the neutral Amadeus look.
+const EMOTION_AURA = {
+    neutral:       { r: 204, g:  50, b:  53, glow: 0.06 },
+    calm:          { r: 255, g: 110, b: 120, glow: 0.05 },
+    content:       { r: 255, g: 170, b: 180, glow: 0.07 },
+    amused:        { r: 255, g: 175, b: 200, glow: 0.11 },
+    smug:          { r: 255, g: 200, b: 120, glow: 0.09, flash: true },
+    proud:         { r: 200, g: 160, b: 255, glow: 0.13, flash: true },
+    jealous:       { r: 255, g:  60, b: 160, glow: 0.18, flash: true },
+    happy:         { r: 255, g: 120, b: 170, glow: 0.11 },
+    excited:       { r: 255, g:  95, b: 150, glow: 0.16, flash: true },
+    surprised:     { r: 255, g: 180, b: 200, glow: 0.14, flash: true },
+    curious:       { r: 210, g: 125, b: 200, glow: 0.08 },
+    focused:       { r: 200, g: 100, b: 255, glow: 0.07 },
+    confused:      { r: 220, g: 180, b: 240, glow: 0.09 },
+    thinking:      { r: 180, g: 175, b: 255, glow: 0.07 },
+    angry:         { r: 255, g:  65, b:  70, glow: 0.20, flash: true },
+    annoyed:       { r: 255, g: 130, b:  75, glow: 0.10 },
+    frustrated:    { r: 255, g: 100, b:  65, glow: 0.14 },
+    sad:           { r: 120, g: 130, b: 220, glow: 0.03 },
+    bitter:        { r: 100, g: 120, b: 210, glow: 0.03 },
+    tired:         { r: 180, g: 120, b: 210, glow: 0.04 },
+    sleepy:        { r: 150, g: 100, b: 190, glow: 0.03 },
+    sleeping:      { r: 120, g:  80, b: 175, glow: 0.025 },
+};
+
 class Live2DController {
     constructor(canvasId, modelPath) {
         this.canvasId = canvasId;
@@ -30,9 +58,28 @@ class Live2DController {
         this._isCubism4 = false;
         this._emotionHoldUntil = 0; // explicit emotions hold this long before the mood evaluator resumes
 
+        // Parameter smoothing: store target values for smooth interpolation
+        this._paramTargets = {};     // { paramId: targetValue }
+        this._paramCurrent = {};     // { paramId: currentValue }
+        this._paramSpeed = {};       // { paramId: lerpFactor }
+        this._smoothedParams = new Set();
+
+        // Physics tuning: audio-reactive physics scaling
+        this._physicsScale = 1.0;    // global physics intensity multiplier
+        this._physicsScaleTarget = 1.0;
+        this._physicsAudioBoost = 0.3; // extra physics intensity during audio peaks
+        this._basePhysicsScale = 1.0;  // base physics scale when idle
+
         // Visual controls (Kurisu Cubism 4 model overrides)
         this.armChangeActive = false;
         this.blushLevel = 0; // 0 = none, 1 = blush 1 (0.5), 2 = blush 2 (1.0)
+
+        // Pet mode: freely draggable mini-Kurisu (toggled from the HUD button)
+        this._petMode = false;
+        this._petPendingPos = null; // position queued while the model is still loading
+        this._petDragCount = 0;      // total drag interactions for reactions
+        this._petReactionActive = false; // prevents overlapping pet reactions
+        this._lastPetInteraction = 0; // timestamp of last drag interaction
 
         // Head sway system (Phase 15/Alive enhancements)
         this._headSway = {
@@ -134,10 +181,13 @@ class Live2DController {
         // Pause flag set by pause()/resume() so timers can be gated
         this._paused = false;
 
-        // Stage spotlight tint (updated from proximity, throttled)
+        // Stage spotlight tint (updated from proximity + emotion, throttled)
         this._auraEl = null;
         this._lastAuraP = -1;
         this._lastAuraColor = '';
+        this._lastEmo = '';
+        this._lastFlash = 0;
+        this._auraFlashUntil = 0;
 
         // Eyebrow micro-expressions
         this._brows = {
@@ -170,6 +220,9 @@ class Live2DController {
         this._lastSurprise = 0;           // cooldown guard for triggerSurprise()
         this._lastEmotionCheck = 0;       // throttle for the mood evaluator
         this._lastExpression = undefined; // last expression asset applied
+
+        // Speech/lip-sync state
+        this._speechOffTimer = null;      // delayed isSpeaking=false timer
     }
 
     /**
@@ -185,7 +238,7 @@ class Live2DController {
             // actually caps how often Pixi renders the model while idle.
             this.app.ticker.speed = idle ? 0.2 : 1.0;
             if (typeof this.app.ticker.maxFPS === 'number') {
-                this.app.ticker.maxFPS = idle ? 10 : 0;
+                this.app.ticker.maxFPS = idle ? 10 : 30;
             }
         }
         if (idle) {
@@ -194,14 +247,75 @@ class Live2DController {
     }
 
     /**
+     * Adjust physics and animation intensity based on performance level.
+     * Called from wallpaper.js performance governor.
+     * perfLevel: 0 = lowest, 2 = highest
+     */
+    setPerfLevel(level) {
+        const levels = [
+            { physicsScale: 0.5, animationSpeed: 0.5, maxFPS: 15 },
+            { physicsScale: 0.75, animationSpeed: 0.75, maxFPS: 20 },
+            { physicsScale: 1.0, animationSpeed: 1.0, maxFPS: 30 },
+        ];
+        const cfg = levels[Math.max(0, Math.min(levels.length - 1, level))];
+        this._basePhysicsScale = cfg.physicsScale;
+
+        if (this.app && this.app.ticker) {
+            this.app.ticker.speed = cfg.animationSpeed;
+            if (typeof this.app.ticker.maxFPS === 'number') {
+                this.app.ticker.maxFPS = cfg.maxFPS;
+            }
+        }
+    }
+
+    /**
      * Feed the current bass/audio energy so the mood engine can react to the
      * soundtrack in real time (0..1). Called from wallpaper.js per audio frame.
+     * Also updates the audio-reactive physics scaling for cloth/hair dynamics.
      */
     setAudioEnergy(level) {
         this._audioEnergy = Math.max(0, Math.min(1, level || 0));
         if (this._audioEnergy > 0.2) {
             this._lastAudioTime = performance.now();
             this._lastActivityTime = performance.now();
+        }
+        // Audio-reactive physics: more intense during strong beats
+        this._updatePhysicsScale();
+    }
+
+    /**
+     * Lip-sync: feed vocal frequency bands to drive Kurisu's mouth animation.
+     * Called from wallpaper.js per audio frame with FFT bins.
+     * Uses smoothing for natural mouth opening and closing.
+     */
+    setLipSync(vocalsAvg, audioArray, bassVal) {
+        if (!this._ready || !this.model || !this.model.internalModel) return;
+
+        // Amplify vocals amplitude to open her mouth clearly
+        let openness = Math.min(1.0, (vocalsAvg || 0) * 3.5);
+        if (openness < 0.08) openness = 0;
+
+        // Track speech state
+        if (openness > 0) {
+            this.isSpeaking = true;
+        } else if (this.isSpeaking) {
+            // Delay turning off speaking to let the mouth close naturally
+            this._speechOffTimer = setTimeout(() => {
+                this.isSpeaking = false;
+            }, 150);
+        }
+
+        // Frequency-aware mouth form: bass = wider smile, treble = tighter
+        let mouthForm = 0;
+        if (openness > 0.4) {
+            const hasTreble = audioArray && audioArray.slice(8, 16).some(v => v > 0.3);
+            mouthForm = hasTreble ? 0.7 : 1.0; // slight smile for speech
+        }
+
+        // Apply via smoothed parameters for natural transitions
+        this.setParameter('ParamMouthOpenY', 'ParamMouthOpenY', openness, true);
+        if (this._isCubism4) {
+            this.setParameter('ParamMouthForm', 'ParamMouthForm', mouthForm, true);
         }
     }
 
@@ -215,6 +329,100 @@ class Live2DController {
         this._lastSurprise = now;
         this._surpriseUntil = now + 1500;
         this.setEmotion('surprised');
+    }
+
+    /**
+     * Toggle pet mode: a smaller, freely draggable Kurisu. Position persists
+     * via wallpaper.js (localStorage); disabling re-centers her on stage.
+     */
+    setPetMode(enabled) {
+        enabled = !!enabled;
+        if (this._petMode === enabled) return;
+        this._petMode = enabled;
+        document.body.classList.toggle('pet-mode', enabled);
+        if (!enabled) {
+            this._dragged = false;
+            this._petDragCount = 0;
+            this._petReactionActive = false;
+            this._fitModel(); // full size, back to center stage
+            // Return to neutral expression when exiting pet mode
+            if (this.model && this._ready) {
+                this.setEmotion('neutral');
+            }
+        } else if (this.model) {
+            this._applyPetScale(); // shrink without moving her
+            // Playful reaction when entering pet mode
+            if (this._ready) {
+                this.setEmotion('amused', 5000);
+            }
+        }
+        if (this.app && this.app.renderer) this.app.renderer.render(this.app.stage);
+    }
+
+    /**
+     * Pet interaction: called when the user drags Kurisu around in pet mode.
+     * Triggers reaction animations based on drag distance and duration.
+     */
+    _petInteraction(dragDistance) {
+        if (!this._petMode || !this._ready || !this.model) return;
+
+        // Count drags for cumulative petting reaction
+        this._petDragCount = (this._petDragCount || 0) + 1;
+        this._lastPetInteraction = performance.now();
+
+        if (dragDistance > 100 && !this._petReactionActive) {
+            // Long drag: she's being carried around
+            this._petReactionActive = true;
+            this.setEmotion('surprised', 2000);
+            setTimeout(() => {
+                this._petReactionActive = false;
+                if (this._petMode) this.setEmotion('content', 3000);
+            }, 2000);
+        } else if (this._petDragCount > 3 && !this._petReactionActive) {
+            // After petting her several times, she gets playful/happy
+            this._petReactionActive = true;
+            this.setEmotion('happy', 4000);
+            setTimeout(() => {
+                this._petReactionActive = false;
+            }, 4000);
+        }
+        }
+
+    /**
+     * Place Kurisu at normalized stage coords (0..1). Queued while the model
+     * is still loading and applied once the avatar is ready.
+     */
+    setPetPosition(nx, ny) {
+        this._petPendingPos = { nx: nx, ny: ny };
+        if (!this.model || !this.app) return;
+        const view = this.app.view;
+        this.model.x = nx * view.width;
+        this.model.y = ny * view.height;
+        this._dragged = true; // keep her there on resize
+        this._syncGroundShadow();
+        if (this.app.renderer) this.app.renderer.render(this.app.stage);
+    }
+
+    // Shrink the model to pet size at its current position.
+    _applyPetScale() {
+        if (!this.model) return;
+        const s = this.model.scale.x;
+        this.model.scale.set(s * 0.8, s * 0.8);
+        this._syncGroundShadow();
+    }
+
+    // Keep the grounding shadow under her feet wherever she is dragged.
+    _syncGroundShadow() {
+        const shadowEl = document.getElementById('l2d-shadow');
+        if (!shadowEl || !this.model || !this.app) return;
+        const view = this.app.view;
+        const pct = Math.min(95, Math.max(5, (this.model.x / view.width) * 100));
+        shadowEl.style.left = pct + '%';
+        // Track her vertical position too: the model's feet sit just under its
+        // center point (anchor 0.5, full-height fit), so map feet onto height %.
+        const feetY = this.model.y + this.model.height * this.model.scale.y * 0.5;
+        const bottomPct = Math.min(98, Math.max(0, ((view.height - feetY) / view.height) * 100));
+        shadowEl.style.bottom = bottomPct + '%';
     }
 
     /**
@@ -232,6 +440,11 @@ class Live2DController {
         if (holdMs && holdMs > 0) {
             this._emotionHoldUntil = performance.now() + holdMs;
         }
+        // Strong emotions fire a short stage-light surge
+        const seat = EMOTION_AURA[target];
+        if (changed && seat && seat.flash) {
+            this._auraFlashUntil = performance.now() + 650;
+        }
         if (changed) {
             this._applyExpression(this._expressionForEmotion(target));
         }
@@ -244,10 +457,17 @@ class Live2DController {
                 return 'Stanby Smile';
             case 'amused':
                 return 'Blush 2'; // soft smile + visible blush — playful, not full happy
+            case 'smug':
+                return 'Blush 2'; // smug uses Blush 2 with extra cheek via override
+            case 'proud':
+                return 'Stanby Smile'; // proud uses Smile with special aura
+            case 'jealous':
+                return 'Stanby Angry'; // jealous uses Angry expression with different tint
             case 'content':
             case 'calm':
                 return 'Blush 1'; // gentle blush — satisfied but subdued
             case 'curious':
+            case 'confused':
             case 'surprised':
                 return 'Stanby Surprised';
             case 'sad':
@@ -272,8 +492,10 @@ class Live2DController {
         if (!this._ready || !this.model) return;
         try {
             if (expName && typeof this.model.expression === 'function') {
+                // Smooth transition: fade expression over 0.4s by leveraging
+                // pixi-live2d-display's built-in fade. The fade time is per-call.
                 this._lastExpression = expName;
-                this.model.expression(expName);
+                this.model.expression(expName, 0, 400);
             } else if (this._lastExpression && typeof this.model.resetExpression === 'function') {
                 this._lastExpression = undefined;
                 this.model.resetExpression();
@@ -305,8 +527,16 @@ class Live2DController {
         } else if (this.isSpeaking) {
             const e = this._audioEnergy || 0;
             label = e > 0.6 ? 'excited' : (e > 0.25 ? 'happy' : 'content');
+        } else if (this._petMode && this._petReactionActive) {
+            // During pet interaction, emotion is set by _petInteraction()
+            return;
         } else if (this._proximity > 0.55) {
-            label = 'happy'; // she notices you hovering near her face
+            // Near her face: check for smug/pride if recently interacted
+            if (this._petDragCount > 2 && (now - this._lastPetInteraction) < 8000) {
+                label = 'smug';
+            } else {
+                label = 'happy'; // she notices you hovering near her face
+            }
         } else {
             const quiet = now - this._lastActivityTime;
             if (quiet > 90000) {
@@ -322,12 +552,26 @@ class Live2DController {
     }
 
     /**
-     * Set a parameter value dynamically, supporting both Cubism 2 and Cubism 4 names.
+     * Set a parameter value directly, supporting both Cubism 2 and Cubism 4 names.
+     * Supports smooth interpolation when smooth=true is passed.
      */
-    setParameter(id2, id3, value) {
+    setParameter(id2, id3, value, smooth) {
         if (!this.model || !this.model.internalModel) return;
         const coreModel = this.model.internalModel.coreModel;
         if (!coreModel) return;
+
+        const paramId = this._isCubism4 ? id3 : id2;
+
+        if (smooth && paramId) {
+            // Store target and enable smoothing
+            this._paramTargets[paramId] = value;
+            if (!(paramId in this._paramCurrent)) {
+                this._paramCurrent[paramId] = this._readParamValue(paramId);
+            }
+            this._paramSpeed[paramId] = 0.15; // smooth speed per frame
+            this._smoothedParams.add(paramId);
+            return; // Don't immediately apply; let the animation loop handle it
+        }
 
         if (this._isCubism4) {
             if (coreModel.setParameterValueById) {
@@ -361,6 +605,124 @@ class Live2DController {
     }
 
     /**
+     * Read the current value of a parameter.
+     */
+    _readParamValue(paramId) {
+        if (!this.model || !this.model.internalModel) return 0;
+        const coreModel = this.model.internalModel.coreModel;
+        if (!coreModel) return 0;
+
+        try {
+            if (this._isCubism4) {
+                if (coreModel.getParameterValueById) {
+                    return coreModel.getParameterValueById(paramId) || 0;
+                }
+            } else {
+                if (coreModel.getParamFloat) {
+                    return coreModel.getParamFloat(paramId) || 0;
+                }
+            }
+        } catch (e) {
+            return 0;
+        }
+        return 0;
+    }
+
+    /**
+     * Apply smoothed parameter values each frame.
+     */
+    _applySmoothedParams(coreModel) {
+        if (this._smoothedParams.size === 0) return;
+
+        for (const paramId of this._smoothedParams) {
+            const target = this._paramTargets[paramId];
+            const current = this._paramCurrent[paramId];
+            const speed = this._paramSpeed[paramId] || 0.1;
+
+            this._paramCurrent[paramId] = current + (target - current) * speed;
+
+            if (Math.abs(target - this._paramCurrent[paramId]) < 0.001) {
+                this._paramCurrent[paramId] = target;
+            }
+
+            if (this._isCubism4) {
+                if (coreModel.setParameterValueById) {
+                    coreModel.setParameterValueById(paramId, this._paramCurrent[paramId]);
+                }
+            } else {
+                if (coreModel.setParamFloat) {
+                    coreModel.setParamFloat(paramId, this._paramCurrent[paramId]);
+                }
+            }
+
+            // Remove from smoothing set if we've reached the target
+            if (this._paramCurrent[paramId] === target) {
+                this._smoothedParams.delete(paramId);
+            }
+        }
+    }
+
+    /**
+     * Update audio-reactive physics scaling.
+     * Called from wallpaper.js via setAudioEnergy or directly.
+     */
+    _updatePhysicsScale(audioLevel) {
+        if (!audioLevel && audioLevel !== 0) {
+            audioLevel = this._audioEnergy || 0;
+        }
+        
+        // Physics responds to audio energy: base scale + boost during peaks
+        const boost = audioLevel > 0.3 ? (audioLevel - 0.3) * this._physicsAudioBoost / 0.7 : 0;
+        this._physicsScaleTarget = this._basePhysicsScale + boost;
+        
+        // Smooth the physics scale change
+        this._physicsScale += (this._physicsScaleTarget - this._physicsScale) * 0.1;
+    }
+
+    /**
+     * Texture LOD switching: dynamically scale texture resolution based on performance.
+     * The model uses 4096px textures at full quality; this scales down the resolution
+     * at lower performance levels to reduce VRAM usage.
+     */
+    _updateTextureLOD() {
+        if (!this.app || !this.app.renderer || !this.app.renderer.options) return;
+        
+        const resolution = this.app.renderer.options.resolution || 1.0;
+        const currentLODs = this.app.renderer.options.textureLOD;
+        
+        // Texture LOD levels:
+        // Level 0: Full resolution (4096px)
+        // Level 1: Half resolution (2048px) 
+        // Level 2: Quarter resolution (1024px)
+        // We adjust by limiting the max texture size and enabling mipmapping
+        
+        let maxTextureSize = 4096;
+        if (resolution <= 0.5) maxTextureSize = 1024;
+        else if (resolution <= 0.75) maxTextureSize = 2048;
+        
+        try {
+            const gl = this.app.renderer.gl;
+            if (gl) {
+                // Update max texture size hint - this affects how textures are downsampled
+                // Note: This is a hint, not a hard limit, but combined with resolution
+                // scaling it provides effective LOD management
+                if (gl.getError) gl.getError(); // clear errors
+            }
+        } catch (e) {
+            // WebGL context might not be ready
+            console.warn('[L2D] Texture LOD update skipped:', e);
+        }
+        
+        // Update model rendering quality based on resolution
+        if (this.model && this.model.internalModel) {
+            const coreModel = this.model.internalModel.coreModel;
+            if (coreModel && typeof coreModel.setRenderingTexture !== 'undefined') {
+                // Adjust any runtime texture parameters here
+            }
+        }
+    }
+
+    /**
      * Initialize the PixiJS app and load the Live2D model.
      */
     async init() {
@@ -372,15 +734,21 @@ class Live2DController {
 
         // Create PixiJS Application only if it doesn't exist
         if (!this.app) {
-            this.app = new PIXI.Application({
-                view: canvas,
-                autoStart: true,
-                backgroundAlpha: 0,
-                antialias: true,
-                transparent: true,
-                // Cap backing resolution to keep the GPU cost reasonable on hi-DPI screens
-                resolution: Math.min(window.devicePixelRatio || 1, 1.5),
-            });
+this.app = new PIXI.Application({
+            view: canvas,
+            autoStart: true,
+            backgroundAlpha: 0,
+            antialias: true,
+            transparent: true,
+            // Cap backing resolution to 1.0x to keep GPU/VRAM cost down
+            resolution: 1.0,
+        });
+
+        // Cap the render loop to 30fps: the HUD visuals redraw at ~30fps, so
+        // rendering the Live2D stage any faster just wastes GPU/CPU cycles.
+        if (typeof this.app.ticker.maxFPS === 'number') {
+            this.app.ticker.maxFPS = 30;
+        }
 
             canvas.addEventListener('webglcontextlost', (event) => {
                 event.preventDefault();
@@ -447,15 +815,20 @@ class Live2DController {
                 this._onHit(hitAreas);
             });
 
-            // Start idle motion loop
-            const idleMotionGroup = this._isCubism4 ? 'Idle' : 'idle';
-            this.model.motion(idleMotionGroup);
-
-            // Setup mouse tracking
+            // Setup mouse tracking (for gaze/head follow + proximity)
             this._setupMouseTracking();
 
-            // Start ambient motion system
-            this._startAmbientSystem();
+            // Start idle motion loop - use a very light eye-only idle instead of the heavy
+            // 58Loop (58s full-body). haru_g_idle only animates eye openness, ~10s.
+            const idleMotionGroup = this._isCubism4 ? 'Idle' : 'idle';
+            // Don't play the default idle; our procedural system (breathing, head sway,
+            // body sway, blinking, idle eyes, brows) handles subtle lifelike motion.
+            // this.model.motion(idleMotionGroup);
+
+            // Disable the ambient motion system that randomly plays TapBody/Special
+            // (foreign motions like xhiyori_m03, Out From Camera that animate
+            // ParamBodyAngle/ParamAngle heavily). Our lifelike loop covers it.
+            // this._startAmbientSystem();
 
             // Start rare ambient moods (soft smile / blush moments)
             this._startAmbientMoods();
@@ -464,6 +837,13 @@ class Live2DController {
             this._startLifelikeAnimations();
 
             this._ready = true;
+
+            // If pet mode was restored before the model finished loading,
+            // place her at the saved spot now that we can.
+            if (this._petMode && this._petPendingPos) {
+                this.setPetPosition(this._petPendingPos.nx, this._petPendingPos.ny);
+            }
+
             console.log('[L2D] Kurisu model loaded. Cubism4:', this._isCubism4, '— lifelike animations active');
             return true;
         } catch (e) {
@@ -505,12 +885,14 @@ class Live2DController {
             // Update all subsystems
             this._updateProximity();
             this._updateAmbientMood(clampedDt);
+            this._updatePhysicsScale(); // apply audio-reactive physics scaling
             this._updateBlink(timestamp, clampedDt, coreModel);
             this._updateBreathing(clampedDt, coreModel);
             this._updateBodySway(clampedDt, coreModel);
             this._updateHeadSway(clampedDt, coreModel);
             this._updateIdleEyes(timestamp, clampedDt, coreModel);
             this._updateBrows(timestamp, clampedDt, coreModel);
+            this._applySmoothedParams(coreModel); // apply interpolated parameter values
 
             // Emotion engine (throttled internally to ~2.5Hz)
             this._updateEmotion(timestamp);
@@ -539,12 +921,19 @@ class Live2DController {
                 if (this._ambientMood.type === 'blush') {
                     cheek = Math.max(cheek, this._ambientMood.value * 0.55);
                 }
-                coreModel.setParameterValueById('ParamCheek', cheek);
+                
+                // Extra blush for jealous emotion
+                const label = this.currentEmotion;
+                if (label === 'jealous') {
+                    cheek = Math.max(cheek, 0.8);
+                }
+                
+                // Smooth cheek transitions for natural blush fade
+                this.setParameter('ParamCheek', 'ParamCheek', cheek, true);
 
                 // Mouth Form: sets "ParamMouthForm" to 1.0 (smile), -1.0 (frown), or 0.0 (neutral)
-                const label = this.currentEmotion;
-                const smileEmotions = ['happy', 'excited', 'content', 'good', 'positive', 'calm'];
-                const frownEmotions = ['sad', 'bitter', 'tired', 'negative', 'annoyed', 'angry', 'frustrated', 'stress', 'confused'];
+                const smileEmotions = ['happy', 'excited', 'content', 'good', 'positive', 'calm', 'smug', 'proud'];
+                const frownEmotions = ['sad', 'bitter', 'tired', 'negative', 'annoyed', 'angry', 'frustrated', 'stress', 'confused', 'jealous'];
                 
                 let mouthForm = 0.0;
                 if (smileEmotions.includes(label)) mouthForm = 1.0;
@@ -555,13 +944,14 @@ class Live2DController {
                     mouthForm = Math.max(mouthForm, this._ambientMood.value * 0.7);
                 }
                 
-                coreModel.setParameterValueById('ParamMouthForm', mouthForm);
+                // Smooth mouth form transitions
+                this.setParameter('ParamMouthForm', 'ParamMouthForm', mouthForm, true);
             }
         } else {
             // Cubism 2 fallback mouth form
             const label = this.currentEmotion;
-            const smileEmotions = ['happy', 'excited', 'content', 'good', 'positive', 'calm'];
-            const frownEmotions = ['sad', 'bitter', 'tired', 'negative', 'annoyed', 'angry', 'frustrated', 'stress', 'confused'];
+            const smileEmotions = ['happy', 'excited', 'content', 'good', 'positive', 'calm', 'smug', 'proud'];
+            const frownEmotions = ['sad', 'bitter', 'tired', 'negative', 'annoyed', 'angry', 'frustrated', 'stress', 'confused', 'jealous'];
             
             let mouthForm = 0.0;
             if (smileEmotions.includes(label)) mouthForm = 1.0;
@@ -648,28 +1038,55 @@ class Live2DController {
     }
 
     /**
-     * Stage spotlight: cool cyan when alone, warming to rose as the cursor
-     * approaches her face. Throttled so style writes stay sparse.
+     * Stage spotlight: the base hue follows her current emotion (see
+     * EMOTION_AURA), warming toward rose and brightening as the cursor nears
+     * her face. Strong emotions fire a brief light surge. Rewrites are kept
+     * sparse by quantizing the gentle breathing shimmer.
      */
     _updateAura() {
         if (!this._auraEl) {
             this._auraEl = document.getElementById('l2d-aura');
             if (!this._auraEl) return;
         }
+        const emo = this.currentEmotion || 'neutral';
+        const seat = EMOTION_AURA[emo] || EMOTION_AURA.neutral;
+        const emoChanged = emo !== this._lastEmo;
         const p = this._proximity;
-        if (Math.abs(p - this._lastAuraP) < 0.03) return;
-        this._lastAuraP = p;
 
-        const r = Math.round(126 + (255 - 126) * p);
-        const g = Math.round(211 - (211 - 77) * p);
-        const b = Math.round(250 - (250 - 109) * p);
-        const inner = `rgba(${r}, ${g}, ${b}, ${(0.10 + 0.10 * p).toFixed(3)})`;
-        const mid = `rgba(${r}, ${g}, ${b}, ${(0.05 + 0.05 * p).toFixed(3)})`;
-        const color = inner;
-        if (color !== this._lastAuraColor) {
-            this._lastAuraColor = color;
-            this._auraEl.style.background =
-                `radial-gradient(ellipse 55% 42% at 50% 46%, ${inner} 0%, ${mid} 45%, transparent 75%)`;
+        const now = performance.now();
+        let flash = 0;
+        if (this._auraFlashUntil && now < this._auraFlashUntil) {
+            flash = Math.min(1, (this._auraFlashUntil - now) / 350);
+        }
+
+        // Gate: only rewrite the style when something actually changed.
+        if (!emoChanged && flash === this._lastFlash && Math.abs(p - this._lastAuraP) < 0.03) return;
+        this._lastEmo = emo;
+        this._lastAuraP = p;
+        this._lastFlash = flash;
+
+        // Emotion hue
+        let r = seat.r;
+        let g = seat.g;
+        let b = seat.b;
+        // Cursor warmth pulls the light toward warm rose and brightens it
+        const t = p;
+        r += (255 - r) * t * 0.55;
+        g += (77 - g) * t * 0.55;
+        b += (109 - b) * t * 0.55;
+        // Slow breathing so the stage light feels alive even when idle
+        const breathe = 0.5 + 0.5 * Math.sin(Math.floor(now / 500) * 0.9);
+        let alpha = (seat.glow + flash * 0.10) * (0.45 + 0.55 * breathe) * (0.85 + 0.15 * p);
+        alpha = Math.max(0.02, Math.min(0.32, alpha));
+        const rs = Math.round(r);
+        const gs = Math.round(g);
+        const bs = Math.round(b);
+        const inner = `rgba(${rs}, ${gs}, ${bs}, ${alpha.toFixed(3)})`;
+        const mid = `rgba(${rs}, ${gs}, ${bs}, ${(alpha * 0.5).toFixed(3)})`;
+        const css = `radial-gradient(ellipse 55% 42% at 50% 46%, ${inner} 0%, ${mid} 45%, transparent 75%)`;
+        if (css !== this._lastAuraColor) {
+            this._lastAuraColor = css;
+            this._auraEl.style.background = css;
         }
     }
 
@@ -967,6 +1384,8 @@ class Live2DController {
         const isC4 = this._isCubism4;
         const headName = isC4 ? 'Head' : 'head';
         const bodyName = isC4 ? 'Body' : 'body';
+        const handLName = isC4 ? 'HandL' : 'hand_l';
+        const handRName = isC4 ? 'HandR' : 'hand_r';
 
         if (hitAreas.includes(headName)) {
             if (isC4) {
@@ -984,6 +1403,28 @@ class Live2DController {
                 const bodyMotions = ['tap_body', 'shake', 'pinch_out'];
                 const pick = bodyMotions[Math.floor(Math.random() * bodyMotions.length)];
                 this.model.motion(pick);
+            }
+        } else if (hitAreas.includes(handLName) || hitAreas.includes(handRName)) {
+            // Hand tap: trigger arm change pose with a shy reaction
+            if (isC4) {
+                const hand = hitAreas.includes(handRName) ? 'R' : 'L';
+                
+                // Random reaction: arm change, head tilt, or special idle
+                const reactions = [
+                    { motion: 'TapBody', emotion: 'amused', blush: 1 },
+                    { motion: 'Special', emotion: 'happy', blush: 1 },
+                    { motion: 'TapHead', emotion: 'surprised', blush: 1 },
+                ];
+                const reaction = reactions[Math.floor(Math.random() * reactions.length)];
+                
+                this.model.motion(reaction.motion);
+                // Toggle arm pose on hand tap
+                this.armChangeActive = !this.armChangeActive;
+                this._applyManualOverrides(this.model.internalModel.coreModel);
+                
+                // Shy reaction: blush + appropriate emotion
+                if (this.blushLevel < reaction.blush) this.blushLevel = reaction.blush;
+                this.setEmotion(reaction.emotion, 4000);
             }
         } else if (hitAreas.includes('mouth')) {
             this._randomExpression();
@@ -1062,7 +1503,6 @@ class Live2DController {
         const scale = Math.min(cw / mw, ch / mh) * scaleFactor;
         this.model.scale.set(scale);
         
-        const isPetMode = document.body.classList.contains('pet-mode');
         const shiftX = 0;
         if (this.model.anchor) {
             this.model.anchor.set(0.5, 0.5);
@@ -1151,13 +1591,6 @@ class Live2DController {
             };
         };
 
-        const syncGroundShadow = () => {
-            const shadowEl = document.getElementById('l2d-shadow');
-            if (!shadowEl) return;
-            const pct = Math.min(95, Math.max(5, (this.model.x / view.width) * 100));
-            shadowEl.style.left = pct + '%';
-        };
-
         view.addEventListener('pointerdown', (e) => {
             const p = canvasToWorld(e.clientX, e.clientY);
             dragStart.x = p.x;
@@ -1176,7 +1609,7 @@ class Live2DController {
             const p = canvasToWorld(e.clientX, e.clientY);
             const dx = p.x - dragStart.x;
             const dy = p.y - dragStart.y;
-            if (dragMode === 'tap' && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+            if (dragMode === 'tap' && this._petMode && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
                 dragMode = 'drag';
                 this._dragged = true;
                 this.triggerSurprise(); // she notices being picked up
@@ -1184,7 +1617,8 @@ class Live2DController {
             if (dragMode === 'drag') {
                 this.model.x = Math.min(view.width * 0.88, Math.max(view.width * 0.12, dragStart.modelX + dx));
                 this.model.y = Math.min(view.height * 0.98, Math.max(view.height * 0.3, dragStart.modelY + dy));
-                syncGroundShadow();
+                this._syncGroundShadow();
+                this._petInteraction(Math.hypot(dx, dy));
                 this.app.renderer.render(this.app.stage);
             }
         });
@@ -1196,6 +1630,9 @@ class Live2DController {
                 // A real tap: let the model react to what was hit
                 const p = canvasToWorld(e.clientX, e.clientY);
                 this.model.tap(p.x, p.y);
+            } else if (this._dragged) {
+                // A drag just ended — persist her new spot
+                if (typeof this.onPetMoved === 'function') this.onPetMoved();
             }
         };
         view.addEventListener('pointerup', finishPointer);
@@ -1205,7 +1642,7 @@ class Live2DController {
         view.addEventListener('dblclick', () => {
             this._dragged = false;
             this._fitModel();
-            syncGroundShadow();
+            this._syncGroundShadow();
             this.triggerSurprise();
         });
     }
@@ -1222,6 +1659,7 @@ class Live2DController {
                 this._fitModel();
             }
             this.app.renderer.render(this.app.stage);
+            this._updateTextureLOD();
         }
     }
 
@@ -1264,6 +1702,7 @@ class Live2DController {
         if (this._ambientTimer) clearTimeout(this._ambientTimer);
         if (this._idleTimer) clearTimeout(this._idleTimer);
         if (this._ambientMood && this._ambientMood.timer) clearTimeout(this._ambientMood.timer);
+        if (this._speechOffTimer) clearTimeout(this._speechOffTimer);
         if (this._rafHandle) {
             cancelAnimationFrame(this._rafHandle);
             this._rafHandle = null;

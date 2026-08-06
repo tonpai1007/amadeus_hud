@@ -103,6 +103,14 @@
 		{
 			"Id": "HitAreaHead",
 			"Name": "Head"
+		},
+		{
+			"Id": "HitAreaHandL",
+			"Name": "HandL"
+		},
+		{
+			"Id": "HitAreaHandR",
+			"Name": "HandR"
 		}
 	]
 }

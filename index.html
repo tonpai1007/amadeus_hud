@@ -35,6 +35,11 @@
   <!-- Futuristic Scanline & Digital Grid Overlay -->
   <div class="crt-overlay"></div>
   <div class="grid-overlay"></div>
+  <!-- Unified CRT finish: barrel curvature + phosphor dots + corner vignette
+       + soft bloom so every panel/piece sits inside the same tube -->
+  <div class="crt-curve"></div>
+  <div class="vignette-overlay"></div>
+  <div class="bloom-overlay"></div>
   <!-- World Line Shift FX Overlay -->
   <div class="glitch-overlay" id="glitch-overlay"></div>
 
@@ -61,52 +66,37 @@
         <div id="hud-date">YYYY.MM.DD</div>
         <div class="system-alerts">
           <span class="alert-item"><span class="bullet"></span> KERNEL: ACTIVE_SYNC</span>
-          <span class="alert-item"><span class="bullet"></span> TIMELINE: TARGET_ATTRACTOR</span>
+          <span class="alert-item"><span class="bullet"></span> UPLINK: LIVE_FEED</span>
         </div>
         <div class="now-playing" id="now-playing">
           <span class="np-label">// NOW_PLAYING</span>
           <span class="np-track" id="now-playing-track">AUDIO_FEED_IDLE</span>
           <span class="np-artist" id="now-playing-artist"></span>
         </div>
+        <button class="pet-toggle" id="pet-toggle" title="Toggle pet mode: drag Kurisu anywhere">
+          <span class="pet-toggle-led"></span>
+          <span class="pet-toggle-label">PET_MODE</span>
+          <span class="pet-toggle-state" id="pet-toggle-state">OFF</span>
+        </button>
       </div>
     </header>
 
-    <!-- TOP RIGHT: AMADEUS Cognitive Core + World Line Oscilloscope -->
+    <!-- TOP RIGHT: Phosphor Oscilloscope -->
     <section class="hud-panel top-right-panel" style="width: 380px;">
-      <div class="panel-header">
-        <span class="panel-tag">// AMADEUS_COGNITIVE_CORE</span>
-        <span class="status-indicator online">NEURAL_SYNC</span>
-      </div>
-      <div id="amadeus-core" class="amadeus-core">
-        <canvas id="amadeus-core-canvas"></canvas>
-        <div class="core-thought">
-          <span class="core-thought-label">COG_</span>
-          <span class="core-thought-text" id="amadeus-thought-text">AMADEUS_CORE_INITIALIZING</span>
-        </div>
-      </div>
       <div class="world-line-monitor">
         <div class="panel-header">
-          <span class="panel-tag">// WORLD_LINE_OSCILLOSCOPE</span>
+          <span class="panel-tag">// PHOSPHOR_OSCILLOSCOPE</span>
           <span class="pulse-text">LIVE_TRACE</span>
         </div>
         <div class="world-line-frame">
           <canvas id="world-line-canvas"></canvas>
         </div>
         <div class="world-line-meta">
-          <span id="wl-delta">DELTA +0.0000</span>
+          <span id="wl-audio">SIG 0%</span>
           <span id="wl-mind">MIND 30%</span>
-          <span id="wl-attractor">ATTRACTOR 0.986254</span>
         </div>
       </div>
     </section>
-
-    <!-- CENTER OVERLAY: Sync State -->
-    <div class="center-banner">
-      <div class="sync-status">
-        <div class="pulse-circle"></div>
-        <span>AMADEUS COGNITIVE SYNC LOGIC v2.8</span>
-      </div>
-    </div>
 
     <!-- BOTTOM LEFT: Live News Feed -->
     <section class="hud-panel bottom-left-panel" style="width: 500px; height: 260px; display: flex; flex-direction: column;">
@@ -117,6 +107,47 @@
       <div class="panel-body" style="flex-grow: 1; overflow: hidden;">
         <div class="news-container" id="news-feed">
           <div class="news-loading">> Fetching global intelligence feed...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- BOTTOM CENTER: Kurisu Chat Terminal (transcript log + live input) -->
+    <section class="hud-panel chat-panel" id="chat-panel">
+      <div class="panel-header">
+        <span class="panel-tag">// AMADEUS_TERMINAL</span>
+        <span class="pulse-text chat-uplink" id="chat-uplink">UPLINK: CHECK</span>
+      </div>
+      <div class="chat-log" id="chat-log"></div>
+      <div class="chat-input-row">
+        <input class="chat-input" id="kurisu-input" type="text"
+               placeholder="> transmit to Kurisu... [Enter]" autocomplete="off" spellcheck="false">
+        <button class="chat-send" id="chat-send" type="button">TX</button>
+      </div>
+    </section>
+
+    <!-- BOTTOM RIGHT: System Options (settings panel) -->
+    <section class="hud-panel settings-panel" id="settings-panel">
+      <div class="panel-header settings-header" id="settings-toggle">
+        <span class="panel-tag">// SYSTEM_OPTS</span>
+        <span class="pulse-text" id="settings-state">OPEN</span>
+      </div>
+      <div class="settings-body" id="settings-body" style="display: none;">
+        <div class="settings-group">
+          <div class="settings-title">DISPLAY</div>
+          <label class="setting-row"><span>Oscilloscope</span><input type="checkbox" data-widget="scope" checked></label>
+          <label class="setting-row"><span>News Feed</span><input type="checkbox" data-widget="news" checked></label>
+          <label class="setting-row"><span>Clock + Alerts</span><input type="checkbox" data-widget="clock" checked></label>
+          <label class="setting-row"><span>Audio Ring</span><input type="checkbox" data-widget="ring" checked></label>
+          <label class="setting-row"><span>Chat Terminal</span><input type="checkbox" data-widget="chat" checked></label>
+          <label class="setting-row"><span>CRT / Vignette</span><input type="checkbox" data-widget="crt" checked></label>
+          <label class="setting-row"><span>PET_MODE</span><input type="checkbox" id="setting-pet" checked></label>
+        </div>
+        <div class="settings-group">
+          <div class="settings-title">OSCILLOSCOPE</div>
+          <label class="setting-row"><span>Speed</span><input type="range" id="scope-speed" min="1" max="10" step="1" value="5"></label>
+          <label class="setting-row"><span>Density</span><input type="range" id="scope-density" min="1" max="10" step="1" value="5"></label>
+          <label class="setting-row"><span>Sound Color</span><input type="color" id="scope-ch1" value="#39ff7a"></label>
+          <label class="setting-row"><span>Brain Color</span><input type="color" id="scope-ch2" value="#b388ff"></label>
         </div>
       </div>
     </section>
