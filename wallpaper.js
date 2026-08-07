@@ -1291,6 +1291,12 @@ function updateWorldLine() {
   mindEnergy += (mindTarget - mindEnergy) * 0.12;
   const mind = Math.min(1, Math.max(0, mindEnergy));
 
+  // Baseline drift â slow DC offset simulating breathing + mental state.
+  // Deeper emotions (sad, calm) drift higher; anxiety drives faster drift.
+  mindBaseline += (0.04 * mind * (emotion === 'sad' ? 0.3 :
+              emotion === 'thinking' || emotion === 'curious' ? 0.8 :
+              emotion === 'annoyed' || emotion === 'angry' ? 1.2 : 0.6) - mindBaseline) * 0.04;
+
   const spec = lastSpectrum;
 
   // Time-smooth each bin so the spectral peaks transition smoothly with the
@@ -1357,58 +1363,92 @@ function updateWorldLine() {
    wlPhase2 += 0.08 + mind * 0.12;  // mental activity drives rhythm speed
    const mindAmp = h * 0.15 * (0.10 + 0.90 * mind);
 
-   // Emotion-specific frequency content â different feelings engage different
-   // brainwave bands (delta for calm/sleep, beta for thinking, etc.).
-   const e = emotion;
-   let waveFreq = 4.2;   // base rhythm
-   let hiFreq = 13.1;    // high-frequency detail
-   let loDepth = 0.32;   // delta component
-   let hiDepth = 0.24;   // beta/gamma component
-   if (e === 'sleeping' || e === 'sleepy') {
-     waveFreq = 1.2; hiFreq = 6.1; loDepth = 0.44; hiDepth = 0.08;
-   } else if (e === 'calm' || e === 'content') {
-     waveFreq = 3.5; hiFreq = 9.2; loDepth = 0.38; hiDepth = 0.16;
-   } else if (e === 'happy' || e === 'excited' || e === 'surprised') {
-     waveFreq = 8.4; hiFreq = 22.3; loDepth = 0.24; hiDepth = 0.36;
-   } else if (e === 'thinking' || e === 'curious') {
-     waveFreq = 6.8; hiFreq = 17.6; loDepth = 0.28; hiDepth = 0.32;
-   } else if (e === 'annoyed' || e === 'angry') {
-     waveFreq = 11.2; hiFreq = 28.4; loDepth = 0.42; hiDepth = 0.44;
-   } else if (e === 'sad') {
-     waveFreq = 2.8; hiFreq = 7.8; loDepth = 0.48; hiDepth = 0.06;
-   }
-   // Cognitive state adds energy on top of emotion
-   if (live2DController) {
-     if (live2DController.isThinking) waveFreq *= 1.6;
-     else if (live2DController.isTyping) waveFreq *= 1.3;
-     else if (live2DController.isSpeaking) waveFreq *= 1.15;
-   }
+    // Emotion-specific patterns: each feeling has a distinct waveform shape
+    // plus baseline drift and jitter profile.
+    const e = emotion;
+    let waveFreq = 4.2;   // base rhythm
+    let hiFreq = 13.1;    // high-frequency detail
+    let loDepth = 0.32;   // delta component
+    let hiDepth = 0.24;   // beta/gamma component
+    let jitterAmp = 0.02; // sub-pixel analog jitter
+    let jitterScale = 1.0;
 
-   // Draw the mental trace with emotion-driven wave patterns
-   wlCtx.beginPath();
-   for (let x = 0; x <= w; x += step) {
-     const t = x / w;
-     const ph = wlPhase2;
-     // Multi-harmonic brainwave: delta/theta/alpha/beta mix
-     let v =
-         loDepth * Math.sin(t * Math.PI * 2 * waveFreq * 0.34 + ph * 0.3)
-       + 0.38 * Math.sin(t * Math.PI * 2 * waveFreq * 0.7 + ph * 0.8 + 0.8)
-       + 0.32 * Math.sin(t * Math.PI * 2 * waveFreq * 1.2 + ph * 1.4 + 1.9)
-       + hiDepth * Math.sin(t * Math.PI * 2 * hiFreq + ph * 2.3 + 3.1);
-     // Mental drive: stronger + spikier as activity rises
-     v *= 0.20 + 0.80 * mind;
-     // Sharp neural spikes that slowly drift in time â more frequent when
-     // she's thinking or excited
-     const spikeFreq = live2DController && live2DController.isThinking ? 0.014 : 0.021;
-     const sp = Math.sin(x * spikeFreq + Math.floor(ph / 4) * 5.17);
-     if (sp > (live2DController && live2DController.isThinking ? 0.92 : 0.98)) {
-       v -= 0.7 * mind * sp;
-     }
-     v = Math.max(-1.1, Math.min(1.1, v));
-     const y = h * 0.22 - v * mindAmp;
-     if (x === 0) wlCtx.moveTo(x, y);
-     else wlCtx.lineTo(x, y);
-   }
+    if (e === 'sleeping' || e === 'sleepy') {
+      waveFreq = 1.2; hiFreq = 6.1; loDepth = 0.44; hiDepth = 0.08;
+      jitterAmp = 0.005;
+    } else if (e === 'calm' || e === 'content') {
+      waveFreq = 3.5; hiFreq = 9.2; loDepth = 0.38; hiDepth = 0.16;
+      jitterAmp = 0.01;
+    } else if (e === 'happy' || e === 'excited' || e === 'surprised') {
+      waveFreq = 8.4; hiFreq = 22.3; loDepth = 0.24; hiDepth = 0.36;
+      jitterAmp = 0.03;
+    } else if (e === 'thinking' || e === 'curious') {
+      waveFreq = 6.8; hiFreq = 17.6; loDepth = 0.28; hiDepth = 0.32;
+      jitterAmp = 0.04;
+      jitterScale = 1.8;
+    } else if (e === 'annoyed' || e === 'angry') {
+      waveFreq = 11.2; hiFreq = 28.4; loDepth = 0.42; hiDepth = 0.44;
+      jitterAmp = 0.06;
+      jitterScale = 2.2;
+    } else if (e === 'sad') {
+      waveFreq = 2.8; hiFreq = 7.8; loDepth = 0.48; hiDepth = 0.06;
+      jitterAmp = 0.01;
+    }
+    // Cognitive state adds energy on top of emotion
+    if (live2DController) {
+      if (live2DController.isThinking) {
+        waveFreq *= 1.6;
+        jitterAmp *= 1.5;
+      } else if (live2DController.isTyping) {
+        waveFreq *= 1.3;
+        jitterAmp *= 1.3;
+      } else if (live2DController.isSpeaking) {
+        waveFreq *= 1.15;
+        jitterAmp *= 1.2;
+      }
+    }
+    const spikeThreshold = (live2DController && live2DController.isThinking) ? 0.92 : 0.98;
+    const spikeFreq = live2DController && live2DController.isThinking ? 0.014 : 0.021;
+    const spikeAmp = 0.7 * mind;
+
+    // Draw the mental trace with emotion-driven wave patterns + baseline drift
+    wlCtx.beginPath();
+    for (let x = 0; x <= w; x += step) {
+      const t = x / w;
+      const ph = wlPhase2;
+      // Multi-harmonic brainwave: delta/theta/alpha/beta mix
+      let v =
+          loDepth * Math.sin(t * Math.PI * 2 * waveFreq * 0.34 + ph * 0.3)
+        + 0.38 * Math.sin(t * Math.PI * 2 * waveFreq * 0.7 + ph * 0.8 + 0.8)
+        + 0.32 * Math.sin(t * Math.PI * 2 * waveFreq * 1.2 + ph * 1.4 + 1.9)
+        + hiDepth * Math.sin(t * Math.PI * 2 * hiFreq + ph * 2.3 + 3.1);
+      // Mental drive: stronger + spikier as activity rises
+      v *= 0.20 + 0.80 * mind;
+      // Sharp neural spikes that slowly drift in time â more frequent when
+      // she's thinking or excited
+      const sp = Math.sin(x * spikeFreq + Math.floor(ph / 4) * 5.17);
+      if (sp > spikeThreshold) {
+        v -= spikeAmp * sp;
+      }
+      // Emotion-specific waveform shape tweaks
+      if (e === 'happy' || e === 'excited') {
+        // upward bias, more positive excursions
+        v += 0.15 * Math.sin(t * Math.PI * 2 * 2.1 + ph * 0.5);
+      } else if (e === 'sad') {
+        // downward sag, heavier low-end
+        v -= 0.2 * Math.abs(Math.sin(t * Math.PI * 2 * 0.8 + ph * 0.2)) * 0.5;
+      } else if (e === 'annoyed' || e === 'angry') {
+        // jagged high-frequency jitter built in
+        v += 0.18 * Math.sin(t * Math.PI * 2 * 45 + ph * 3.5);
+      }
+      // Sub-pixel analog jitter for CRT authenticity
+      v += (Math.random() * 2 - 1) * jitterAmp * jitterScale;
+      v = Math.max(-1.15, Math.min(1.15, v));
+      // Apply slow baseline drift (simulates scope DC offset / breathing)
+      const y = h * 0.22 + mindBaseline * 8 - v * mindAmp;
+      if (x === 0) wlCtx.moveTo(x, y);
+      else wlCtx.lineTo(x, y);
+    }
 
    // Emotion-tinted glow â intensity scales with mental energy
    const glowA = Math.min(1, 0.45 + mind * 0.55);
@@ -1426,15 +1466,28 @@ function updateWorldLine() {
    wlCtx.shadowBlur = 0;
    wlCtx.stroke();
 
-  // Scan head - bright vertical sweep line at the right edge
-  const sx = w - 1;
-  const scan = wlCtx.createLinearGradient(sx - 14, 0, sx, 0);
-  scan.addColorStop(0, 'rgba(255, 77, 85, 0)');
-  scan.addColorStop(1, 'rgba(255, 77, 85, 0.4)');
-  wlCtx.fillStyle = scan;
-  wlCtx.fillRect(sx - 14, 0, 14, h);
-  wlCtx.fillStyle = 'rgba(255, 77, 85, 0.7)';
-  wlCtx.fillRect(sx, 0, 1, h);
+   // Scan head - bright vertical sweep line at the right edge
+   const sx = w - 1;
+   const scan = wlCtx.createLinearGradient(sx - 14, 0, sx, 0);
+   scan.addColorStop(0, 'rgba(255, 77, 85, 0)');
+   scan.addColorStop(1, 'rgba(255, 77, 85, 0.4)');
+   wlCtx.fillStyle = scan;
+   wlCtx.fillRect(sx - 14, 0, 14, h);
+   wlCtx.fillStyle = 'rgba(255, 77, 85, 0.7)';
+   wlCtx.fillRect(sx, 0, 1, h);
+
+   // Trigger level indicator â horizontal dashed line showing threshold
+   // The trigger rises when she's more mentally active, making the scope
+   // "trigger" on higher-energy brain states
+   const triggerY = h * 0.22 + mindBaseline * 8 - mindAmp * mind;
+   wlCtx.setLineDash([3, 3]);
+   wlCtx.strokeStyle = `rgba(255, 85, 170, ${0.25 + mind * 0.4})`;
+   wlCtx.lineWidth = 1;
+   wlCtx.beginPath();
+   wlCtx.moveTo(8, triggerY);
+   wlCtx.lineTo(w - 20, triggerY);
+   wlCtx.stroke();
+   wlCtx.setLineDash([]);
 
   // Live readouts in the corners
   wlCtx.font = '9px "Share Tech Mono", monospace';
@@ -1453,6 +1506,7 @@ function updateWorldLineMeta() {
   if (audioEl) audioEl.innerText = 'SIG ' + Math.round(lastAudioLevel * 100) + '%';
   if (mindEl) mindEl.innerText = 'MIND ' + Math.round(mindEnergy * 100) + '%';
 }
+
 // --- CLOCK & DATE WIDGET ---
 function initClock() {
   const clockEl = document.getElementById('hud-clock');
@@ -1527,9 +1581,6 @@ function initAudioCanvas() {
   window.addEventListener('resize', resize);
 }
 
-// Pre-render the static radial grid circles once per resize so they aren't
-// re-stroked on every animation frame. Also bakes a rotating tick ring into an
-// offscreen canvas so the spin only costs one drawImage per frame.
 function buildStaticRing() {
   if (!audioCanvas) return;
   staticRingCanvas = document.createElement('canvas');
@@ -1542,7 +1593,6 @@ function buildStaticRing() {
   const cy = staticRingCanvas.height / 2;
   const radius = Math.min(audioCanvas.width, audioCanvas.height) * 0.17;
 
-  // Concentric grid rings (unified red)
   sctx.strokeStyle = 'rgba(255, 77, 85, 0.05)';
   sctx.lineWidth = 1;
   for (const r of [radius - 30, radius, radius + 30]) {
@@ -1550,7 +1600,6 @@ function buildStaticRing() {
     sctx.arc(cx, cy, r, 0, Math.PI * 2);
     sctx.stroke();
   }
-  // Faint cross-hairs so the rotation reads against the symmetric grid
   sctx.strokeStyle = 'rgba(255, 85, 170, 0.06)';
   for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
     sctx.beginPath();
@@ -1559,17 +1608,14 @@ function buildStaticRing() {
     sctx.stroke();
   }
 
-  // Shared spectrum-bar gradient: crimson core blooming to pink.
   if (ctx) {
     ringBarGradient = ctx.createRadialGradient(cx, cy, radius, cx, cy, radius + 130);
-    ringBarGradient.addColorStop(0, 'rgba(255, 77, 85, 0.95)');   // electric red inner
+    ringBarGradient.addColorStop(0, 'rgba(255, 77, 85, 0.95)');
     ringBarGradient.addColorStop(0.55, 'rgba(255, 85, 170, 0.85)');
-    ringBarGradient.addColorStop(1, 'rgba(255, 85, 170, 0.25)');  // soft pink fade
+    ringBarGradient.addColorStop(1, 'rgba(255, 85, 170, 0.25)');
   }
 }
 
-// Slowly rotating tick ring, pre-rendered once per resize. Drawn in its own
-// offscreen canvas so the per-frame cost is a single rotate + drawImage.
 let spinRingCanvas = null;
 let ringSpinAngle = 0;
 
@@ -1584,8 +1630,7 @@ function buildSpinRing() {
   const cy = spinRingCanvas.height / 2;
   const radius = Math.min(audioCanvas.width, audioCanvas.height) * 0.17;
 
-   // Radial tick marks (60 around the outer edge) so rotation is obvious
-   g.strokeStyle = 'rgba(255, 77, 85, 0.35)';
+  g.strokeStyle = 'rgba(255, 77, 85, 0.35)';
   g.lineWidth = 1.5;
   g.lineCap = 'round';
   const ticks = 60;
@@ -1599,9 +1644,8 @@ function buildSpinRing() {
     g.stroke();
   }
 
-  // A single dashed "calibration" arc that slowly counter-rotates
   g.setLineDash([3, 26]);
-  wlCtx.strokeStyle = `rgba(255, 77, 85, 0.45)`;
+  g.strokeStyle = `rgba(255, 77, 85, 0.45)`;
   g.lineWidth = 1.5;
   g.beginPath();
   g.arc(cx, cy, radius - 6, 0, Math.PI * 2);
@@ -1609,20 +1653,15 @@ function buildSpinRing() {
   g.setLineDash([]);
 }
 
-// Draw Audio Ring spectrum behind Kurisu
-// --- FREQUENCY BAND COLOR INTERPOLATION ---
-// bass (0) = crimson/red, mids (~0.5) = white, treble (1) = hot pink
 function freqColor(freq) {
   if (freq < 0.5) {
-    const t = freq * 2;  // 0 -> 1 across bass range
-    // Interpolate crimson (#ff4d55) â white (#ffffff)
+    const t = freq * 2;
     const r = Math.round(255 * (1 - t) + 255 * t);
     const g = Math.round(77 * (1 - t) + 255 * t);
     const b = Math.round(85 * (1 - t) + 255 * t);
     return { r, g, b };
   } else {
-    const t = (freq - 0.5) * 2;  // 0 -> 1 across treble range
-    // Interpolate white (#ffffff) â hot pink (#ff55aa)
+    const t = (freq - 0.5) * 2;
     const r = Math.round(255 * (1 - t) + 255 * t);
     const g = Math.round(255 * (1 - t) + 85 * t);
     const b = Math.round(255 * (1 - t) + 170 * t);
@@ -1638,27 +1677,21 @@ function drawAudioRing(fftData, now) {
   const cx = audioCanvas.width / 2;
   const cy = audioCanvas.height / 2;
   
-  // Center visualizer circular ring
   const radius = Math.min(audioCanvas.width, audioCanvas.height) * 0.17;
   
-  // Pulse central circle dynamically based on average bass volume
   let bassSum = 0;
   for (let i = 0; i < 10; i++) bassSum += fftData[i] || 0;
   const bassAvg = bassSum / 10;
   const centerPulseRadius = radius - 20 + bassAvg * 25;
 
-  // 1. Rotating gears â€” redraw into an offscreen snapshot every GEAR_INTERVAL ms
-  //    (they turn too slowly to need every frame), then blit the snapshot.
   if (now - lastGearUpdate >= GEAR_INTERVAL) {
     lastGearUpdate = now;
     buildGearSnapshot(cx, cy, bassAvg);
   }
   if (gearSnapshot) ctx.drawImage(gearSnapshot, 0, 0);
 
-  // 2. Static radial grid (pre-rendered offscreen)
   if (staticRingCanvas) ctx.drawImage(staticRingCanvas, 0, 0);
 
-  // 2b. Slowly rotating tick ring (baked offscreen; just rotate + blit)
   ringSpinAngle += 0.0015;
   if (spinRingCanvas) {
     ctx.save();
@@ -1668,7 +1701,6 @@ function drawAudioRing(fftData, now) {
     ctx.restore();
   }
 
-  // 3. Central pulse glow ring (crimson) â€” single shadow draw per frame
   ctx.strokeStyle = `rgba(255, 77, 85, ${0.10 + bassAvg * 0.45})`;
   ctx.lineWidth = 3;
   ctx.shadowColor = '#ff4d55';
@@ -1676,13 +1708,10 @@ function drawAudioRing(fftData, now) {
   ctx.beginPath();
   ctx.arc(cx, cy, centerPulseRadius, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.shadowBlur = 0; // reset shadow
+  ctx.shadowBlur = 0;
 
-  // 4. Radial frequency lines â€” each bar colored by frequency band:
-   //    bass (red/crimson) â mids (white) â treble (pink). Glow falloff pass
-   //    so low bars stay a faint glow instead of disappearing.
-   const numBars = Math.min(fftData.length, PERF_LEVELS[perfLevel].ringBars);
-   ctx.lineCap = 'round';
+  const numBars = Math.min(fftData.length, PERF_LEVELS[perfLevel].ringBars);
+  ctx.lineCap = 'round';
 
    for (let i = 0; i < numBars; i++) {
      const angle = (i / numBars) * Math.PI * 2;

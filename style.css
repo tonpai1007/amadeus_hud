@@ -682,12 +682,12 @@ body.world-line-shifting .glitch-overlay {
 .world-line-frame {
   position: relative;
   height: 160px;
-  border: 1px solid rgba(57, 255, 122, 0.25);
+  border: 1px solid rgba(255, 77, 85, 0.25);
   border-radius: 4px;
   background:
-    radial-gradient(circle at 50% 50%, rgba(57, 255, 122, 0.07), transparent 70%),
-    linear-gradient(rgba(57, 255, 122, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(57, 255, 122, 0.05) 1px, transparent 1px),
+    radial-gradient(circle at 50% 50%, rgba(255, 77, 85, 0.07), transparent 70%),
+    linear-gradient(rgba(255, 77, 85, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 77, 85, 0.05) 1px, transparent 1px),
     rgba(2, 4, 10, 0.6);
   background-size: 100% 100%, 26px 26px, 26px 26px, 100% 100%;
   overflow: hidden;
@@ -710,8 +710,8 @@ body.world-line-shifting .glitch-overlay {
 }
 
 #wl-audio {
-  color: rgba(57, 255, 122, 0.95);
-  text-shadow: 0 0 6px rgba(57, 255, 122, 0.6);
+  color: rgba(255, 77, 85, 0.95);
+  text-shadow: 0 0 6px rgba(255, 77, 85, 0.6);
 }
 
 #wl-mind {
