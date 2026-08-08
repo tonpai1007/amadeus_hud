@@ -254,6 +254,31 @@ class Live2DController {
         this._lastTap = null;
         this._pokeRecoilUntil = 0;
 
+        // Persistent mood (0 cold .. 100 warm), pushed in from wallpaper.js
+        this._mood = 55;
+
+        // Time-of-day awareness: drowsier after dark, brighter by day
+        this._hour = new Date().getHours();
+        this._night = this._hour < 6 || this._hour >= 19;
+        this._lastTodCheck = 0;
+
+        // Self-initiated idle gestures (arms cross / clock glance / stretch)
+        this._gestureArm = false;
+        this._gestureArmUntil = 0;
+        this._gestureTimer = null;
+        this._stretchUntil = 0;
+
+        // Sleep/wake choreography: slow doze-off close, stretch on waking
+        this._wasSleeping = false;
+        this._sleepChoreo = { dozing: false, start: 0, dur: 1400 };
+
+        // Dirty-check caches for direct (non-smoothed) per-frame parameter
+        // writes, so steady-state frames don't re-write identical values.
+        this._lastDirectParam = {};
+        this._lastEyeOpen = -1;
+        this._lastHands = -1;
+        this._lastEggType = null;
+
         // Speech/lip-sync state
         this._speechOffTimer = null;      // delayed isSpeaking=false timer
     }
@@ -394,6 +419,95 @@ class Live2DController {
     }
 
     /**
+     * Persistent mood (0 cold .. 100 warm), pushed in from wallpaper.js after
+     * chat or interactions. Drives ambient smile/neutral choice, stage light
+     * tint, and how often she volunteers canned chatter.
+     */
+    setMood(m) {
+        this._mood = Math.max(5, Math.min(95, typeof m === 'number' ? m : 55));
+    }
+
+    /**
+     * Time-of-day awareness: refreshes the current local hour about once a
+     * minute and flips the "night" flag (drowsier blinks, tighter pupils,
+     * dimmer stage light, shorter idle fuse).
+     */
+    _updateTimeOfDay(now) {
+        if (now - this._lastTodCheck < 60000) return;
+        this._lastTodCheck = now;
+        this._hour = new Date().getHours();
+        this._night = this._hour < 6 || this._hour >= 19;
+    }
+
+    /**
+     * Self-initiated idle gestures: when the desktop has been quiet for a
+     * while, she crosses her arms, glances up at the clock, or stretches.
+     * Gated the same way as the ambient motions — never during speech, pets,
+     * holds, or the easter-egg moments.
+     */
+    _startIdleGestures() {
+        if (this._isCubism4 !== true) return;
+        // Skip cosmetic idle gestures for reduced-motion users
+        if (this._reducedMotion()) return;
+        const schedule = () => {
+            const delay = 70000 + Math.random() * 50000;
+            this._gestureTimer = setTimeout(() => {
+                this._gestureTimer = null;
+                if (!this._ready || this._paused || this._idleMode || this.isSpeaking || this._petMode ||
+                    this._holdTimer || this._egg.type || this._gestureArm ||
+                    (this.currentEmotion === 'angry' || this.currentEmotion === 'annoyed' ||
+                     this.currentEmotion === 'frustrated' || this.currentEmotion === 'stress' ||
+                     this.currentEmotion === 'scared' || this.currentEmotion === 'sad' ||
+                     this.currentEmotion === 'bitter' || this.currentEmotion === 'sleepy' ||
+                     this.currentEmotion === 'sleeping' || this.currentEmotion === 'surprised')) {
+                    schedule();
+                    return;
+                }
+                // Only when the cursor has been still for a while
+                const still = performance.now() - (this._mouseActivity ? (this._mouseActivity.lastMoveTime || 0) : 0);
+                if (still < 30000) {
+                    schedule();
+                    return;
+                }
+                this._playIdleGesture();
+                schedule();
+            }, delay);
+        };
+        schedule();
+    }
+
+    _playIdleGesture() {
+        const now = performance.now();
+        const roll = Math.random();
+        if (roll < 0.5) {
+            // Brood: cross her arms and hold the pose for a few seconds
+            this._gestureArm = true;
+            this._gestureArmUntil = now + 6000 + Math.random() * 5000;
+        } else if (roll < 0.8) {
+            // Glance up at the clock — a brief peek in a random direction
+            this._peek.active = true;
+            this._peek.dir = Math.random() < 0.5 ? -1 : 1;
+            this._peek.started = now;
+            this._peek.until = now + 1500;
+            this._peekEnv = 0;
+        } else {
+            // Stretch: cross arms briefly with a soft body wiggle
+            this._gestureArm = true;
+            this._gestureArmUntil = now + 3200;
+            this._stretchUntil = now + 1400;
+            if (this._beatBob) this._beatBob.pulse = Math.max(this._beatBob.pulse || 0, 0.45);
+        }
+    }
+
+    _updateIdleGestures(now) {
+        if (this._gestureArm && this._gestureArmUntil && now >= this._gestureArmUntil) {
+            this._gestureArm = false;
+            this._gestureArmUntil = 0;
+        }
+        if (this._stretchUntil && now >= this._stretchUntil) this._stretchUntil = 0;
+    }
+
+    /**
      * Shadow tap: clicking her feet/grounding shadow is its own interaction —
      * a startled hop, occasionally with a line. Called from wallpaper.js.
      */
@@ -409,6 +523,7 @@ class Live2DController {
             const line = this._petLine();
             if (line) this.onInteract(line);
         }
+        if (typeof this.onMood === 'function') this.onMood(2);
     }
 
     /**
@@ -425,6 +540,7 @@ class Live2DController {
 
         const deep = this._petDragCount > 2;
         this.setEmotion(deep ? 'happy' : 'content', 2500);
+        if (typeof this.onMood === 'function') this.onMood(deep ? 6 : 4);
         if (this.blushLevel < 1) this.blushLevel = 1;
         if (this.model.motion) {
             try { this.model.motion(this._isCubism4 ? 'TapBody' : 'tap_body'); } catch (e) { /* optional */ }
@@ -467,6 +583,7 @@ class Live2DController {
             const line = this._pokeLine();
             if (line) this.onInteract(line);
         }
+        if (typeof this.onMood === 'function') this.onMood(-6);
     }
 
     _pokeLine() {
@@ -583,14 +700,35 @@ class Live2DController {
     setEmotion(label, holdMs) {
         const target = (label || 'neutral').toLowerCase();
         const changed = target !== this.currentEmotion;
+        const now = performance.now();
+
+        // Sleep/wake choreography on the sleepy<->wakeful transition edges.
+        const wasSleeping = this._wasSleeping;
+        const isSleeping = target === 'sleepy' || target === 'sleeping';
+        this._wasSleeping = isSleeping;
+        if (isSleeping && !wasSleeping && this._ready) {
+            // Doze-off: close her eyes gradually instead of snapping shut.
+            this._sleepChoreo.dozing = true;
+            this._sleepChoreo.start = now;
+            this._sleepChoreo.dur = 1400;
+        }
+        if (!isSleeping && wasSleeping && this._ready) {
+            // Waking: a gentle stretch motion; the greeting line is handled by
+            // wallpaper.js's wake flow so we don't double-speak.
+            this._sleepChoreo.dozing = false;
+            try {
+                if (this.model && this.model.motion && this._isCubism4) this.model.motion('Special');
+            } catch (e) { /* optional */ }
+        }
+
         this.currentEmotion = target;
         if (holdMs && holdMs > 0) {
-            this._emotionHoldUntil = performance.now() + holdMs;
+            this._emotionHoldUntil = now + holdMs;
         }
         // Strong emotions fire a short stage-light surge
         const seat = EMOTION_AURA[target];
         if (changed && seat && seat.flash) {
-            this._auraFlashUntil = performance.now() + 650;
+            this._auraFlashUntil = now + 650;
         }
         if (changed) {
             this._applyExpression(this._expressionForEmotion(target));
@@ -686,10 +824,13 @@ class Live2DController {
             }
         } else {
             const quiet = now - this._lastActivityTime;
-            if (quiet > 90000) {
+            // At night she runs out of steam sooner; on a warm mood she keeps a
+            // soft smile while idle, on a cold one she sits neutral and distant.
+            const quietLimit = this._night ? 60000 : 90000;
+            if (quiet > quietLimit) {
                 label = 'tired';
             } else if (quiet > 20000) {
-                label = 'content'; // relaxed, soft smile while things are calm
+                label = this._mood >= 60 ? 'content' : 'neutral';
             }
         }
 
@@ -710,11 +851,23 @@ class Live2DController {
         const paramId = this._isCubism4 ? id3 : id2;
 
         if (smooth && paramId) {
-            // Store target and enable smoothing
-            this._paramTargets[paramId] = value;
-            if (!(paramId in this._paramCurrent)) {
+            const cur = this._paramCurrent[paramId];
+            // Skip redundant updates: if the value is already rendered at (or
+            // easing toward) this exact target, there's nothing new to do —
+            // otherwise the per-frame calls (pupils, blend shapes, cheek,
+            // mouth) would re-queue and re-write the same value every frame.
+            const moving = this._smoothedParams.has(paramId);
+            if (cur !== undefined && Math.abs(cur - value) <= 0.001 && !moving) {
+                return;
+            }
+            if (this._paramTargets[paramId] === value && moving) {
+                return;
+            }
+            if (cur === undefined) {
                 this._paramCurrent[paramId] = this._readParamValue(paramId);
             }
+            // Store target and enable smoothing
+            this._paramTargets[paramId] = value;
             this._paramSpeed[paramId] = 0.15; // smooth speed per frame
             this._smoothedParams.add(paramId);
             return; // Don't immediately apply; let the animation loop handle it
@@ -935,6 +1088,9 @@ this.app = new PIXI.Application({
             // active reaction — the lifelike loop still handles idle motion.
             this._startRareAmbientMotions();
 
+            // Self-initiated idle gestures: arms crossed, clock glances, stretches
+            this._startIdleGestures();
+
             // Start rare ambient moods (soft smile / blush moments)
             this._startAmbientMoods();
 
@@ -993,6 +1149,7 @@ this.app = new PIXI.Application({
             const clampedDt = Math.min(dt, 100);
 
             // Update all subsystems
+            this._updateTimeOfDay(timestamp);
             this._updateProximity();
             this._updateAmbientMood(clampedDt);
             this._updatePhysicsScale(); // apply audio-reactive physics scaling
@@ -1005,6 +1162,7 @@ this.app = new PIXI.Application({
             this._updateHeadSway(clampedDt, coreModel);
             this._updateIdleEyes(timestamp, clampedDt, coreModel);
             this._updateBrows(timestamp, clampedDt, coreModel);
+            this._updateIdleGestures(timestamp);
             this._applySmoothedParams(coreModel); // apply interpolated parameter values
 
             // Emotion engine (throttled internally to ~2.5Hz)
@@ -1032,8 +1190,14 @@ this.app = new PIXI.Application({
     _applyManualOverrides(coreModel) {
         if (this._isCubism4) {
             if (coreModel.setParameterValueById) {
-                // Arm Change: sets "HandChange" parameter to 1.0 (crossed) or 0.0 (normal)
-                coreModel.setParameterValueById('HandChange', this.armChangeActive ? 1.0 : 0.0);
+                // Arm Change: sets "HandChange" parameter to 1.0 (crossed) or 0.0 (normal).
+                // Self-initiated idle gestures also cross her arms (stretch / brood).
+                // Dirty-checked: the pose only flips on an edge, not every frame.
+                const hands = (this.armChangeActive || this._gestureArm) ? 1.0 : 0.0;
+                if (hands !== this._lastHands) {
+                    this._lastHands = hands;
+                    coreModel.setParameterValueById('HandChange', hands);
+                }
                 
                 // Blush: sets "ParamCheek" parameter to 0.5 (Mild), 1.0 (Heavy), or 0.0 (None).
                 // Proximity adds a smooth blush when the cursor is close to her face,
@@ -1107,6 +1271,10 @@ this.app = new PIXI.Application({
         // Startle flash dilates the pupils hard, then the smoothing decays it
         if (now < this._surpriseUntil) target = Math.max(target, 1.45);
 
+        // After dark her pupils sit tighter — drowsier look
+        if (this._night) target *= 0.85;
+
+        this._pupilTarget = target;
         this.setParameter('PARAM_EYE_SIZE', 'EyeballSize', target, true);
     }
 
@@ -1200,6 +1368,10 @@ this.app = new PIXI.Application({
     _applyEasterEggLayer(coreModel) {
         if (this._isCubism4 !== true || !coreModel || !coreModel.setParameterValueById) return;
         const type = this._egg.type || '';
+        // Dirty-checked: the egg layer only changes on a start/stop edge, so
+        // steady-state frames skip all four model writes.
+        if (type === this._lastEggType) return;
+        this._lastEggType = type;
         coreModel.setParameterValueById('TongueOut', type === 'blep' ? 1.0 : 0.0);
         coreModel.setParameterValueById('Tears', type === 'tears' ? 1.0 : 0.0);
         coreModel.setParameterValueById('RageSign', type === 'rage' ? 1.0 : 0.0);
@@ -1376,7 +1548,8 @@ this.app = new PIXI.Application({
                         b.phaseStart = now + 80;
                     } else {
                         b.phase = 'open';
-                        b.nextBlinkTime = now + this._randomRange(b.minInterval, b.maxInterval);
+                        const nightSlow = this._night ? 1.4 : 1;
+                        b.nextBlinkTime = now + this._randomRange(b.minInterval, b.maxInterval) * nightSlow;
                     }
                 }
                 break;
@@ -1387,9 +1560,28 @@ this.app = new PIXI.Application({
         // While she's asleep the eyes stay shut — the blink state machine is
         // bypassed until she wakes and the emotion returns to a wakeful one.
         const sleeping = this.currentEmotion === 'sleepy' || this.currentEmotion === 'sleeping';
-        const openness = sleeping ? 0 : b.value;
-        this.setParameter('PARAM_EYE_L_OPEN', 'ParamEyeLOpen', openness);
-        this.setParameter('PARAM_EYE_R_OPEN', 'ParamEyeROpen', openness);
+        let openness;
+        if (sleeping) {
+            if (this._sleepChoreo.dozing) {
+                // Doze-off choreography: ease the eyelids shut over ~1.4s so
+                // falling asleep reads as a slow, natural drop instead of a snap.
+                const t = Math.min(1, (now - this._sleepChoreo.start) / this._sleepChoreo.dur);
+                openness = 1 - (t * t);
+                if (t >= 1) this._sleepChoreo.dozing = false;
+            } else {
+                openness = 0;
+            }
+        } else {
+            openness = b.value;
+        }
+        // Only touch the eyes when the value actually moved — during the long
+        // "open" phase (and while asleep) the target holds steady, so this
+        // skips two redundant model writes per frame.
+        if (Math.abs(openness - this._lastEyeOpen) > 0.0005) {
+            this._lastEyeOpen = openness;
+            this.setParameter('PARAM_EYE_L_OPEN', 'ParamEyeLOpen', openness);
+            this.setParameter('PARAM_EYE_R_OPEN', 'ParamEyeROpen', openness);
+        }
     }
 
     /**
@@ -1453,9 +1645,23 @@ this.app = new PIXI.Application({
         r += (255 - r) * t * 0.55;
         g += (77 - g) * t * 0.55;
         b += (109 - b) * t * 0.55;
+        // Persistent mood tints the stage: warm moods pull toward rose,
+        // cold moods push toward cool blue.
+        const moodMix = (this._mood - 50) / 50;
+        if (moodMix > 0) {
+            r += (255 - r) * moodMix * 0.25;
+            g += (130 - g) * moodMix * 0.12;
+            b += (150 - b) * moodMix * 0.12;
+        } else {
+            const m = -moodMix;
+            r -= r * m * 0.22;
+            b += (210 - b) * m * 0.18;
+        }
         // Slow breathing so the stage light feels alive even when idle
         const breathe = 0.5 + 0.5 * Math.sin(Math.floor(now / 500) * 0.9);
         let alpha = (seat.glow + flash * 0.10) * (0.45 + 0.55 * breathe) * (0.85 + 0.15 * p);
+        // After dark the stage light dims — she's low-key about the hours
+        alpha *= this._night ? 0.85 : 1;
         alpha = Math.max(0.02, Math.min(0.32, alpha));
         const rs = Math.round(r);
         const gs = Math.round(g);
@@ -1767,16 +1973,52 @@ this.app = new PIXI.Application({
             browAngle = 0.0;
         }
 
-        this.setParameter('PARAM_BROW_L_Y', 'ParamBrowLY', bw.currentL + verticalOffset);
-        this.setParameter('PARAM_BROW_R_Y', 'ParamBrowRY', bw.currentR + verticalOffset);
-
-        // Apply angles (if supported by model settings)
-        this.setParameter('PARAM_BROW_L_ANGLE', 'ParamBrowLAngle', browAngle);
-        this.setParameter('PARAM_BROW_R_ANGLE', 'ParamBrowRAngle', browAngle);
+        // Dirty-checked writes: brow offsets only drift a hair per frame and the
+        // angles are emotion constants, so most frames write nothing.
+        const browLY = bw.currentL + verticalOffset;
+        const browRY = bw.currentR + verticalOffset;
+        if (this._shouldWrite('ParamBrowLY', browLY)) {
+            this.setParameter('PARAM_BROW_L_Y', 'ParamBrowLY', browLY);
+        }
+        if (this._shouldWrite('ParamBrowRY', browRY)) {
+            this.setParameter('PARAM_BROW_R_Y', 'ParamBrowRY', browRY);
+        }
+        if (this._shouldWrite('ParamBrowLAngle', browAngle)) {
+            this.setParameter('PARAM_BROW_L_ANGLE', 'ParamBrowLAngle', browAngle);
+        }
+        if (this._shouldWrite('ParamBrowRAngle', browAngle)) {
+            this.setParameter('PARAM_BROW_R_ANGLE', 'ParamBrowRAngle', browAngle);
+        }
     }
 
     _randomRange(min, max) {
         return min + Math.random() * (max - min);
+    }
+
+    /**
+     * OS-level reduced-motion preference: cosmetic body-motion schedulers
+     * (ambient Special motions, self-initiated idle gestures) stay dormant so
+     * the wallpaper respects the user's accessibility setting. The subtle
+     * breathing/blinking/sway loop still runs — those aren't the motion events
+     * that trigger vestibular discomfort.
+     */
+    _reducedMotion() {
+        return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    }
+
+    /**
+     * Dirty check for direct (non-smoothed) writes: only pass through when the
+     * value moved past a small epsilon since the last write, so steady-state
+     * frames skip redundant model writes entirely.
+     */
+    _shouldWrite(id, value, eps) {
+        const last = this._lastDirectParam[id];
+        const threshold = eps || 0.0005;
+        if (last === undefined || Math.abs(last - value) > threshold) {
+            this._lastDirectParam[id] = value;
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -1860,11 +2102,13 @@ this.app = new PIXI.Application({
      */
     _startRareAmbientMotions() {
         if (this._isCubism4 !== true) return;
+        // Skip full-body motion events for reduced-motion users
+        if (this._reducedMotion()) return;
         const schedule = () => {
             const delay = 45000 + Math.random() * 45000;
             this._ambientTimer = setTimeout(() => {
                 this._ambientTimer = null;
-                if (!this._ready || this._paused || this.isSpeaking ||
+                if (!this._ready || this._paused || this._idleMode || this.isSpeaking ||
                     this._petMode || this._holdTimer || this._egg.type ||
                     !this.model || !this.model.motion) {
                     schedule();
@@ -2175,12 +2419,71 @@ this.app = new PIXI.Application({
     }
 
     /**
+     * Debug snapshot for the Ctrl+Shift+D overlay: live emotion, mood,
+     * time-of-day, pupil target, and raw smoothed parameter values so the
+     * blind-tuned constants can be verified against the running model.
+     */
+    debugState() {
+        const b = this._blink;
+        const current = this._paramCurrent || {};
+        const pick = (ids) => {
+            for (const id of ids) {
+                if (current[id] !== undefined) return +current[id].toFixed(2);
+            }
+            return null;
+        };
+        // Mirror the _onHit cheek-poke pixel math so the overlay can draw the
+        // live hit zone over the canvas.
+        let cheekZone = null;
+        if (this._ready && this.model) {
+            const hw = this.model.width * this.model.scale.x;
+            const hh = this.model.height * this.model.scale.y;
+            cheekZone = {
+                x: Math.round(this.model.x + hw * 0.015 - hw * 0.11),
+                y: Math.round((this.model.y - hh * 0.28) - hh * 0.10),
+                w: Math.round(hw * 0.22),
+                h: Math.round(hh * 0.20),
+            };
+        }
+        return {
+            emotion: this.currentEmotion,
+            mood: Math.round(this._mood),
+            night: this._night,
+            hour: this._hour,
+            proximity: +this._proximity.toFixed(2),
+            pupil: +this._pupilTarget.toFixed(2),
+            cheekZone: cheekZone,
+            blinkPhase: b ? b.phase : 'open',
+            blinkValue: b ? +b.value.toFixed(2) : 1,
+            sleep: this._sleepChoreo.dozing ? 'dozing' : (this._wasSleeping ? 'asleep' : 'awake'),
+            gestureArm: this._gestureArm,
+            egg: this._egg.type || 'none',
+            params: {
+                pupil: pick(['EyeballSize', 'PARAM_EYE_SIZE']),
+                eyeOpen: pick(['ParamEyeLOpen', 'PARAM_EYE_L_OPEN']),
+                tongue: pick(['TongueOut']),
+                rage: pick(['RageSign']),
+                smile: pick(['Smile']),
+                sad: pick(['Sad']),
+                angry: pick(['Angry']),
+                surprised: pick(['Surprissed']),
+                scared: pick(['Scared']),
+                bodyAngleZ: pick(['ParamBodyAngleZ', 'PARAM_BODY_ANGLE_Z']),
+                bodyAngleX: pick(['ParamBodyAngleX', 'PARAM_BODY_ANGLE_X']),
+                headAngleZ: pick(['ParamAngleZ', 'PARAM_ANGLE_Z']),
+                hands: pick(['HandChange']),
+            },
+        };
+    }
+
+    /**
      * Clean up timers, animation frame, and optionally PIXI application.
      */
     destroy(complete = false) {
         if (this._ambientTimer) clearTimeout(this._ambientTimer);
         if (this._idleTimer) clearTimeout(this._idleTimer);
         if (this._ambientMood && this._ambientMood.timer) clearTimeout(this._ambientMood.timer);
+        if (this._gestureTimer) clearTimeout(this._gestureTimer);
         if (this._speechOffTimer) clearTimeout(this._speechOffTimer);
         if (this._holdTimer) clearTimeout(this._holdTimer);
         if (this._rafHandle) {

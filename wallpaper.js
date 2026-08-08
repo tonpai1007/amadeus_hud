@@ -106,6 +106,8 @@ window.addEventListener('DOMContentLoaded', () => {
   setInterval(updateEmotionTint, 150);
   initSettings();
   initPetMode();
+  loadMood();
+  initDebugOverlay();
   startPerfGovernor();
   applyTimeOfDay();
   setInterval(applyTimeOfDay, 60 * 1000);
@@ -264,6 +266,74 @@ function loadSettings() {
 
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS)); } catch (e) { /* ignore */ }
+}
+
+// --- MOOD MEMORY ---
+// Kurisu's persistent disposition toward the user, stored across sessions.
+// 0 = cold/distant .. 100 = warm/affectionate. Chat replies, petting, pokes,
+// wake-ups and idle chatter all nudge it, and it drifts slowly back toward
+// neutral over time so moods are sticky but never permanent. The controller
+// reads it (setMood) for ambient smile vs neutral, stage-light tint, and pupil
+// life; wallpaper.js uses it to pick warmer idle lines.
+const MOOD_KEY = 'amadeus.mood';
+const MOOD_DEFAULT = 55;
+let mood = MOOD_DEFAULT;
+let moodLastAdjustAt = 0;
+
+// Per-emotion nudge applied after each chat reply.
+const MOOD_DELTA = {
+  happy: 3, content: 2, thinking: 1, surprised: 1, curious: 1,
+  neutral: 1, confused: 0, sad: -1, sleepy: -1, annoyed: -2, angry: -3,
+};
+function moodDeltaForEmotion(emotion) {
+  return MOOD_DELTA[emotion] !== undefined ? MOOD_DELTA[emotion] : 1;
+}
+
+function loadMood() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MOOD_KEY) || 'null');
+    if (saved && typeof saved.value === 'number') {
+      mood = Math.max(5, Math.min(95, saved.value));
+      moodLastAdjustAt = saved.at || 0;
+    }
+  } catch (e) { /* corrupt save — keep default */ }
+  syncMoodToController();
+}
+
+function saveMood() {
+  scheduleStorageWrite(MOOD_KEY, writeMood);
+}
+
+function writeMood() {
+  try { localStorage.setItem(MOOD_KEY, JSON.stringify({ value: mood, at: performance.now() })); } catch (e) { /* ignore */ }
+}
+
+function syncMoodToController() {
+  if (live2DController && live2DController.setMood) {
+    live2DController.setMood(mood);
+  }
+}
+
+// Decay toward the default (~1 point per 3 min of desktop time) so an old
+// mood can't lock her in permanently.
+function driftMood() {
+  if (!moodLastAdjustAt) { moodLastAdjustAt = performance.now(); return; }
+  const elapsed = performance.now() - moodLastAdjustAt;
+  if (elapsed < 3 * 60 * 1000) return;
+  const steps = Math.min(Math.floor(elapsed / (3 * 60 * 1000)), 5);
+  mood += (mood > MOOD_DEFAULT ? -1 : 1) * steps;
+  mood = Math.max(5, Math.min(95, mood));
+  moodLastAdjustAt += steps * 3 * 60 * 1000;
+  saveMood();
+  syncMoodToController();
+}
+
+// Called from chat replies and from controller interactions via onMood.
+function adjustMood(delta) {
+  mood = Math.max(5, Math.min(95, mood + delta));
+  moodLastAdjustAt = performance.now(); // fresh input resets the drift clock
+  saveMood();
+  syncMoodToController();
 }
 
 // Convert #rrggbb to {r,g,b} or null.
@@ -475,6 +545,35 @@ const KURISU_HISTORY_KEY = 'amadeus.kurisuHistory';
 const KURISU_HISTORY_MAX = 12; // most recent turns kept (1 turn = user + assistant)
 let kurisuHistory = [];
 
+// --- LOCALSTORAGE HYGIENE ---
+// Persisted caches (chat log, chat history, mood) are capped and written on a
+// short debounce so bursts of activity (a chat exchange, petting) cause one
+// disk write instead of one per event; a pagehide flush guarantees nothing
+// meaningful is lost when Lively tears the wallpaper down.
+const STORAGE_DEBOUNCE_MS = 600;
+const storageWriteTimers = {};
+
+function scheduleStorageWrite(key, fn) {
+  if (storageWriteTimers[key]) return; // coalesce burst writes into one
+  storageWriteTimers[key] = setTimeout(() => {
+    storageWriteTimers[key] = null;
+    try { fn(); } catch (e) { /* ignore */ }
+  }, STORAGE_DEBOUNCE_MS);
+}
+
+function flushStorageWrites() {
+  for (const key of Object.keys(storageWriteTimers)) {
+    if (storageWriteTimers[key]) {
+      clearTimeout(storageWriteTimers[key]);
+      storageWriteTimers[key] = null;
+    }
+  }
+  writeKurisuHistory();
+  writeChatLog();
+  writeMood();
+}
+window.addEventListener('pagehide', flushStorageWrites);
+
 function loadKurisuHistory() {
   try {
     const arr = JSON.parse(localStorage.getItem(KURISU_HISTORY_KEY) || '[]');
@@ -485,6 +584,10 @@ function loadKurisuHistory() {
 }
 
 function saveKurisuHistory() {
+  scheduleStorageWrite(KURISU_HISTORY_KEY, writeKurisuHistory);
+}
+
+function writeKurisuHistory() {
   try {
     localStorage.setItem(KURISU_HISTORY_KEY,
       JSON.stringify(kurisuHistory.slice(-KURISU_HISTORY_MAX * 2)));
@@ -513,6 +616,10 @@ function loadChatLog() {
 }
 
 function saveChatLog() {
+  scheduleStorageWrite(CHAT_LOG_KEY, writeChatLog);
+}
+
+function writeChatLog() {
   try {
     localStorage.setItem(CHAT_LOG_KEY, JSON.stringify(chatLog.slice(-CHAT_LOG_MAX)));
   } catch (e) { /* ignore */ }
@@ -621,11 +728,26 @@ let hudTint = { r: EMOTION_TINT.neutral.r, g: EMOTION_TINT.neutral.g, b: EMOTION
 
 function updateEmotionTint() {
   const emo = (live2DController && live2DController.currentEmotion) || 'neutral';
-  const target = EMOTION_TINT[emo] || EMOTION_TINT.neutral;
-  hudTint.r += (target.r - hudTint.r) * 0.08;
-  hudTint.g += (target.g - hudTint.g) * 0.08;
-  hudTint.b += (target.b - hudTint.b) * 0.08;
-  hudTint.glow += (target.glow - hudTint.glow) * 0.08;
+  const base = EMOTION_TINT[emo] || EMOTION_TINT.neutral;
+  // Persistent mood warms or cools the HUD base tint a little on top of the
+  // momentary emotion, so a long-term warm disposition reads in the chrome.
+  const moodMix = (mood - 50) / 50;
+  let tr = base.r, tg = base.g, tb = base.b, tglow = base.glow;
+  if (moodMix > 0) {
+    tr += (255 - tr) * moodMix * 0.20;
+    tg += (150 - tg) * moodMix * 0.10;
+    tb += (170 - tb) * moodMix * 0.10;
+    tglow += (0.5 - tglow) * moodMix * 0.30;
+  } else {
+    const m = -moodMix;
+    tr -= tr * m * 0.15;
+    tb += (190 - tb) * m * 0.12;
+    tglow -= tglow * m * 0.15;
+  }
+  hudTint.r += (tr - hudTint.r) * 0.08;
+  hudTint.g += (tg - hudTint.g) * 0.08;
+  hudTint.b += (tb - hudTint.b) * 0.08;
+  hudTint.glow += (tglow - hudTint.glow) * 0.08;
   const r = Math.round(hudTint.r);
   const g = Math.round(hudTint.g);
   const b = Math.round(hudTint.b);
@@ -729,6 +851,17 @@ const KURISU_IDLE_LINES = [
   "Careful. I'm still calibrating, and the lab's espresso machine is a conspiracy in itself.",
 ];
 
+// When her persistent mood is warm she volunteers softer, more affectionate
+// thoughts instead of the usual dry ones.
+const KURISU_WARM_IDLE_LINES = [
+  "The lab is quiet, but I don't mind the company.",
+  "For the record... I do enjoy working alongside you.",
+  "The divergence meter says today's probability of a good day is unusually high.",
+  "You've been productive. I noticed. That's a compliment.",
+  "If world lines could keep a memory of you, this one would.",
+  "Hmm. I ran the numbers, and you matter more than any simulation.",
+];
+
 // She says one of these when you come back after a long absence.
 const KURISU_WAKE_LINES = [
   "Ah... you're back. I wasn't asleep. I was... calibrating.",
@@ -767,6 +900,31 @@ const KURISU_POKE_LINES = [
   "I'm filing a complaint with the university.",
   "Keep poking and I'll write you into a world line with no coffee.",
 ];
+
+// News-aware reactions: when the submonitor feed picks up a headline in a
+// category she cares about, she occasionally comments on it.
+const KURISU_NEWS_LINES = {
+  science: [
+    "Interesting. The signal's worth a closer look.",
+    "Now that's a world line worth reading.",
+    "Hmm. The data there isn't entirely random.",
+    "Noted. I'll file that under the lab memos.",
+  ],
+  drama: [
+    "People can be so dramatic. Statistically unnecessary.",
+    "That's going to ruffle a few feathers.",
+    "Trouble on another world line, no doubt.",
+  ],
+  tech: [
+    "A new standard? I'll run compatibility tests on that.",
+    "The submonitor says that protocol is still unstable.",
+    "If the docs are correct, that's a genuinely useful fix.",
+  ],
+  default: [
+    "The submonitor feed just updated.",
+    "I logged that headline. Purely for research.",
+  ],
+};
 
 let kurisuBubbleEl = null;
 let kurisuBubbleTextEl = null;
@@ -1100,6 +1258,8 @@ async function kurisuSay(userText) {
   if (live2DController && live2DController.setEmotion) {
     live2DController.setEmotion(reply.emotion || emotionFromText(reply.text), 7000);
   }
+  // The exchange colors her persistent mood.
+  adjustMood(moodDeltaForEmotion(reply.emotion || emotionFromText(reply.text)));
 }
 
 function timeAwareGreeting() {
@@ -1177,8 +1337,10 @@ async function kurisuThink() {
 }
 
 // Unprompted chatter while the user is around but not talking: real thoughts
-// from the Brain when possible, canned lines otherwise.
+// from the Brain when possible, canned lines otherwise. Skipped entirely for
+// users who prefer reduced motion (no surprise audio/bubbles).
 function scheduleIdleChatter() {
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const delay = (10 + Math.random() * 8) * 60 * 1000; // 10-18 minutes
   kurisuIdleChatterTimer = setTimeout(async () => {
     const canSpeak = () => !isIdle && !isSleeping && !kurisuInput && kurisuBubbleEl &&
@@ -1200,7 +1362,8 @@ function scheduleIdleChatter() {
         text = thought.text;
         emotion = thought.emotion;
       } else {
-        text = KURISU_IDLE_LINES[Math.floor(Math.random() * KURISU_IDLE_LINES.length)];
+        const pool = mood >= 65 ? KURISU_WARM_IDLE_LINES : KURISU_IDLE_LINES;
+        text = pool[Math.floor(Math.random() * pool.length)];
       }
       // Re-check: the user may have started typing or the system went idle
       if (canSpeak()) {
@@ -1209,6 +1372,8 @@ function scheduleIdleChatter() {
         if (live2DController && live2DController.setEmotion) {
           live2DController.setEmotion(emotion, 7000);
         }
+        // Volunteering a thought counts as her engaging — tiny warmth bump.
+        adjustMood(0.5);
       }
     }
     scheduleIdleChatter();
@@ -1291,6 +1456,7 @@ function initKurisuChatInput() {
 // When the system is silent and the mouse is idle, throttle everything down.
 function markActivity() {
   lastActivityTime = performance.now();
+  driftMood(); // ambient mood decay ticks on desktop activity
   if (isIdle) enterIdleState(false);
   if (isSleeping) enterSleepState(false);
 }
@@ -1923,6 +2089,11 @@ async function initLive2D() {
     showKurisuBubble(line, 5000);
     appendChatEntry('assistant', line, 'history');
   };
+
+  // Interaction-driven mood feedback (petting warms her, pokes chill her).
+  live2DController.onMood = (delta) => {
+    if (typeof delta === 'number') adjustMood(delta);
+  };
   
   const success = await live2DController.init();
   if (success) {
@@ -2362,6 +2533,47 @@ function timeSince(timestamp) {
   return Math.floor(seconds) + "s";
 }
 
+// News-aware reactions: the feed stories get classified so Kurisu can comment
+// on the ones that fit her obsessions (science, tech, world-line drama).
+function classifyNewsTitle(title) {
+  const t = (title || '').toLowerCase();
+  if (/\b(ai|llm|model|research|science|space|quantum|physics|biology|neural|study|paper|theory)\b/.test(t)) return 'science';
+  if (/\b(law|sue|lawsuit|protest|controvers|war|attack|ban|banned|scandal|crash|hack|breach|leak)\b/.test(t)) return 'drama';
+  if (/\b(web|browser|linux|kernel|gpu|cpu|rust|javascript|typescript|sdk|api|framework|cloud|server|startup|funding)\b/.test(t)) return 'tech';
+  return 'default';
+}
+
+let lastNewsReactionAt = 0;
+
+// Occasionally (not on every refresh) she remarks on the feed. Gated the same
+// way as idle chatter: never while typing, idle, or asleep.
+function reactToNews(stories) {
+  const now = performance.now();
+  if (now - lastNewsReactionAt < 20 * 60 * 1000) return; // ~3 comments/hour max
+  if (isIdle || isSleeping || kurisuInput || !kurisuBubbleEl) return;
+  if (kurisuBubbleEl.classList.contains('visible')) return;
+  if (Math.random() > 0.5) return; // about half the refreshes earn a remark
+
+  const candidates = (stories || []).filter(s => s && s.title);
+  if (!candidates.length) return;
+
+  // Prefer a story in her wheelhouse (science first, then tech/drama).
+  let target = candidates.find(s => classifyNewsTitle(s.title) === 'science')
+            || candidates.find(s => classifyNewsTitle(s.title) === 'tech')
+            || candidates.find(s => classifyNewsTitle(s.title) === 'drama');
+  if (!target) target = candidates[Math.floor(Math.random() * Math.min(candidates.length, 3))];
+
+  lastNewsReactionAt = now;
+  const kind = classifyNewsTitle(target.title);
+  const pool = KURISU_NEWS_LINES[kind] || KURISU_NEWS_LINES.default;
+  const line = pool[Math.floor(Math.random() * pool.length)];
+  showKurisuBubble(line, 7000);
+  appendChatEntry('assistant', line, 'news');
+  if (live2DController && live2DController.setEmotion) {
+    live2DController.setEmotion(kind === 'science' ? 'thinking' : 'curious', 5000);
+  }
+}
+
 // Fetch with a hard timeout so a hung API can never block the news feed.
 async function fetchWithTimeout(url, ms = 8000) {
   const ctrl = new AbortController();
@@ -2435,6 +2647,8 @@ async function fetchRealtimeNews() {
       container.appendChild(item);
     });
 
+    reactToNews(stories);
+
   } catch (err) {
     console.warn("AMADEUS News Sync: API offline, falling back to simulated pool.", err);
     renderFallbackNews(container, statusEl);
@@ -2469,12 +2683,92 @@ function renderFallbackNews(container, statusEl) {
     item.appendChild(metaDiv);
     container.appendChild(item);
   });
+
+  reactToNews(simulatedNewsPool);
 }
 
 // Refresh news feed every 15 minutes (skipped while Lively is paused)
 setInterval(() => {
   if (!isLivelyPaused) fetchRealtimeNews();
 }, 15 * 60 * 1000);
+
+// --- L2D DEBUG OVERLAY (Ctrl+Shift+D) ---
+// Dev-only diagnostics: streams the controller's live parameter state and
+// draws the cheek-poke hit zone over the canvas, so the blind-tuned constants
+// (pupil map, blend layers, easter eggs, poke zone) can be verified against
+// the running model. No-op when the controller isn't loaded.
+let debugOverlayEl = null;
+let debugOverlayRowsEl = null;
+let debugOverlayTimer = null;
+let debugZoneEl = null;
+
+function initDebugOverlay() {
+  debugOverlayEl = document.getElementById('l2d-debug');
+  if (!debugOverlayEl) return;
+  debugOverlayRowsEl = document.getElementById('l2d-debug-rows');
+  debugZoneEl = document.getElementById('l2d-debug-zone');
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.code === 'KeyD' || e.code === 'KeyE')) {
+      e.preventDefault();
+      toggleDebugOverlay();
+    }
+  });
+}
+
+function toggleDebugOverlay() {
+  if (!debugOverlayEl) return;
+  const show = debugOverlayEl.hidden;
+  debugOverlayEl.hidden = !show;
+  if (debugZoneEl) debugZoneEl.style.display = show ? 'block' : 'none';
+  if (show) {
+    refreshDebugOverlay();
+    if (!debugOverlayTimer) debugOverlayTimer = setInterval(refreshDebugOverlay, 250);
+  } else if (debugOverlayTimer) {
+    clearInterval(debugOverlayTimer);
+    debugOverlayTimer = null;
+  }
+}
+
+function refreshDebugOverlay() {
+  if (!debugOverlayRowsEl || !live2DController || !live2DController.debugState) return;
+  const s = live2DController.debugState();
+
+  const p = s.params || {};
+  const num = (v, d = '—') => (v === null || v === undefined) ? d : v;
+  const rows = [
+    ['emotion', s.emotion],
+    ['mood', `${s.mood}/100`],
+    ['time', `${s.hour}:00 · ${s.night ? 'night' : 'day'}`],
+    ['proximity', num(s.proximity)],
+    ['pupil', num(s.pupil)],
+    ['blink', `${s.blinkPhase} ${num(s.blinkValue)}`],
+    ['sleep', s.sleep],
+    ['gestureArm', s.gestureArm ? 'on' : 'off'],
+    ['egg', s.egg],
+    ['param pupil', num(p.pupil)],
+    ['param eyeOpen', num(p.eyeOpen)],
+    ['param tongue/rage', `${num(p.tongue)} / ${num(p.rage)}`],
+    ['param smile/sad', `${num(p.smile)} / ${num(p.sad)}`],
+    ['param angry/surp/scared', `${num(p.angry)} / ${num(p.surprised)} / ${num(p.scared)}`],
+    ['param bodyZ/X', `${num(p.bodyAngleZ)} / ${num(p.bodyAngleX)}`],
+    ['param headZ/hands', `${num(p.headAngleZ)} / ${num(p.hands)}`],
+  ];
+  debugOverlayRowsEl.innerHTML = rows
+    .map(([label, value]) =>
+      `<div class="l2d-debug-row"><span>${label}</span><span class="l2d-debug-val">${value}</span></div>`)
+    .join('');
+
+  // Mirror the poke hit zone onto the canvas overlay (canvas pixel space).
+  if (debugZoneEl) {
+    const z = s.cheekZone;
+    if (z) {
+      debugZoneEl.style.left = z.x + 'px';
+      debugZoneEl.style.top = z.y + 'px';
+      debugZoneEl.style.width = z.w + 'px';
+      debugZoneEl.style.height = z.h + 'px';
+    }
+  }
+}
 
 // --- BEAT PULSE ---
 // Flashes a soft red bloom across the whole screen on the music's kick.

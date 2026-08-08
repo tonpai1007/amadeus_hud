@@ -34,6 +34,13 @@
   <!-- Live2D Makise Kurisu Canvas -->
   <canvas id="live2d-canvas"></canvas>
 
+  <!-- Dev-only L2D debug overlay (Ctrl+Shift+D): live parameter stream + poke hit zone -->
+  <div id="l2d-debug" hidden>
+    <div class="l2d-debug-title">L2D DEBUG</div>
+    <div id="l2d-debug-rows"></div>
+  </div>
+  <div id="l2d-debug-zone" hidden></div>
+
   <!-- Kurisu speech bubble (type to talk, Enter to send) -->
   <div class="kurisu-bubble" id="kurisu-bubble">
     <span class="bubble-text" id="kurisu-bubble-text"></span><span class="bubble-caret" id="kurisu-bubble-caret"></span>

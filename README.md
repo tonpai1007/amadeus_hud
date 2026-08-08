@@ -24,6 +24,12 @@ Interactive, sound-reactive Live2D wallpaper starring Makise Kurisu (Steins;Gate
 - **Realtime news feed** — top Hacker News stories (with a standalone simulated pool when offline).
 - **Idle power saving** — HUD dims after ~8s of silence; Kurisu falls asleep after ~20 minutes of inactivity and wakes when you return.
 - **Time-of-day ambience** — colder "night ops" look between 19:00 and 06:00.
+- **Persistent mood memory** — chat replies, petting and pokes nudge her disposition (0–100) across sessions (stored locally). Warm moods keep her smiling, tint the stage light and HUD rose, and swap idle chatter for softer lines; cold moods make her distant and cool-blue. It drifts slowly back to neutral so she never stays locked in.
+- **Self-initiated idle gestures** — when the desk has been quiet for a while she crosses her arms, glances up at the clock, or stretches, always gated away from speech, pets, and reactions.
+- **News-aware reactions** — she occasionally remarks on the Hacker News feed, picking out the stories that fit her obsessions (science, tech, world-line drama).
+- **Time-of-day mood** — after dark she blinks slower, keeps her pupils tighter, dims the stage light, and runs out of steam sooner.
+- **Sleep/wake choreography** — falling asleep is now a slow eyelid close instead of a snap, and waking up gets a gentle stretch motion before the greeting.
+- **Debug overlay** — `Ctrl+Shift+D` streams the live Live2D parameter values (pupils, blend shapes, easter eggs, body angles) and draws the cheek-poke hit zone over the canvas, so the tuned constants can be verified against the running model (dev-only, no-op without the controller).
 
 ## Install
 
@@ -62,6 +68,7 @@ Kurisu's replies use the first available tier, in order:
 | Click her shadow | Startled hop — a distinct reaction from a normal click |
 | Double-click her canvas | Surprise + returns to center stage |
 | Switch away from the desktop | HUD dims, Kurisu relaxes; on return she peeks and greets you |
+| `Ctrl+Shift+D` | Toggle the dev-only L2D debug overlay (live parameters + poke hit zone) |
 
 ## Project structure
 
@@ -81,6 +88,9 @@ Kurisu's replies use the first available tier, in order:
 - Idle mode drops the HUD to a dim static frame, disables backdrop blur, and throttles the Live2D ticker.
 - A performance governor measures real frame rate and dynamically steps down quality: rendering resolution, audio ring bar count, and texture detail.
 - **Texture LOD switching**: the model loads with 4096px textures at full quality; under performance pressure, texture resolution is downsampled to conserve VRAM.
+- **Dirty-checked parameter writes**: smoothed params skip re-queueing when already at target, and direct per-frame writes (eyes, brows, arms, easter eggs) only touch the model when the value actually moved — steady-state frames write almost nothing.
+- **Reduced-motion respect**: `prefers-reduced-motion` disables the cosmetic body-motion schedulers (ambient Special motions, self-initiated idle gestures, idle chatter); breathing/blinking/sway and the `prefers-reduced-motion` CSS handling still apply.
+- **Storage hygiene**: chat log, chat history, and mood writes are capped and debounced (coalesced) with a pagehide flush, so bursts of activity cause one disk write instead of one per event.
 - `prefers-reduced-motion` is respected for CSS animations.
 
 ## Live2D enhancements
@@ -98,4 +108,9 @@ Kurisu's replies use the first available tier, in order:
 - **Beat bob**: `triggerBeat()` decays a quick side-to-side + forward/back body lean on each bass kick (fed from wallpaper.js's beat detector).
 - **Cheek pokes**: spatial face-hit detection in `_onHit` — taps on the lower side of the head trigger a puffed-annoyed reaction with a RageSign flicker and a body recoil instead of a startle.
 - **Interactive pet animations**: dragging Kurisu triggers surprise reactions; repeated petting makes her progressively happier.
+- **Persistent mood**: `setMood(0–100)` tints the ambient smile-vs-neutral choice, the stage light hue (rose for warm, cool blue for cold), and the HUD chrome; wallpaper.js persists and drifts it, and feeds it back from every interaction (`onMood`).
+- **Time-of-day awareness**: the night flag (19:00–06:00, refreshed ~1/min) slows blink intervals ×1.4, tightens pupil targets ×0.85, dims the stage light, and shortens the idle-before-"tired" fuse.
+- **Sleep/wake choreography**: `setEmotion('sleepy')` eases the eyelids shut over ~1.4s (`_sleepChoreo`), and waking plays a Special-group stretch motion before the greeting line.
+- **Self-initiated idle gestures**: a scheduler (like the ambient motions) crosses her arms via `HandChange`, glances at the clock, or does a brief stretch — gated on speech, pets, holds, easter eggs, and a 30s-still cursor.
+- **Debug state**: `debugState()` exposes the live emotion/mood/time/pupil/blink/easter-egg state plus raw smoothed parameter values and the cheek-poke zone in canvas pixels, consumed by the Ctrl+Shift+D overlay.
 - **Performance-aware animations**: animation speed and physics intensity scale with the performance governor.
