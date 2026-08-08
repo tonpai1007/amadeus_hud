@@ -7,6 +7,16 @@ Interactive, sound-reactive Live2D wallpaper starring Makise Kurisu (Steins;Gate
 ## Features
 
 - **Live2D Kurisu avatar** — mouse-tracking gaze, blinking, breathing, body/head sway, idle eye micro-movements, ambient moods (smile/blush), click/tap interactions, and **audio-reactive lip-sync** that drives her mouth to the music.
+- **Living eyes** — her pupils dilate and constrict with emotion and how close you hover near her face, and spike wide on every startle, all smoothed so it reads like an organic gaze shift.
+- **Emotion-fidelity face layers** — the model's Smile/Sad/Angry/Surprised/Scared blend shapes stack on top of her expression assets, so each mood reads clearly instead of leaning on a single expression swap.
+- **Expression easter eggs** — rare bespoke moments from the model's unused parameters: a playful tongue-out **blep** in calm moods, a welling **tear** when she's sad, an **anger vein** when genuinely annoyed, and a blink-and-you-miss-it **yandere glint**. Plus rare ambient **Special motions** (haru_g_idle / xhiyori_m03) that play once a minute or so when she's unoccupied.
+- **Beat-reactive body bob** — on every bass kick she sways and nods along, synced to the same pulse as the audio ring and the ambient particles.
+- **Cheek pokes** — tap the side of her face and she puffs up annoyed: blush, a RageSign flicker, a sharp recoil, and a sassy voiced quip.
+- **Stage camera** — she fades in with a gentle settle on load, drifts softly with your cursor (parallax), and leans closer when you hover near her face.
+- **Voice replies (TTS)** — every line she says (chat replies, greetings, wake/peek lines, idle chatter) is spoken aloud via the browser's `speechSynthesis`. Long replies are chunked per sentence so Chrome's 15s-utterance bug can't cut her off. Toggle in **SYSTEM_OPTS → Voice Replies**.
+- **Peek reactions** — when you switch away (window focus loss, Lively pause, lock/screensaver) the HUD dims and she relaxes; when you come back she **peeks** — a glance toward where you returned from, plus a Steins;Gate-flavored greeting.
+- **Extended touch moves** — hold-to-pet (press and hold for a blushy, progressively happier reaction), shadow taps (click her feet/shadow for a startled hop), and double-click (startle + return to center stage) — each occasionally with a voiced quip.
+- **Beat-reactive ambient particles** — the drifting data dust scatters, flares and shudders on every bass kick, synced to the same beat pulse as the audio ring, with an expanding shockwave ring.
 - **Phosphor oscilloscope** — a classic CRT-style scope in the top-right panel with two live traces: the **audio spectrum** (crimson, vertical peaks responding to bass/treble frequencies) and Kurisu's **thought/feeling state** (violet, driven by her emotion engine and thinking/typing/speaking). Both leave a glowing phosphor trail that decays like an old CRT, over a crisp green graticule.
 - **Audio spectrum ring** — bass-reactive crimson ring, rotating gears, and a cursor gravitational lens.
 - **Type to talk** — chat with Kurisu: press Enter to send, Escape to dismiss. Replies fall back through AMADEUS Brain → canned Steins;Gate-flavored lines (Ollama/OpenRouter are disabled by default to save RAM).
@@ -46,10 +56,12 @@ Kurisu's replies use the first available tier, in order:
 | --- | --- |
 | Move mouse | Kurisu's eyes track you; the spotlight warms near her face; the audio ring bends toward the cursor |
 | Type a message | She notices; **Enter** sends, **Escape** dismisses; typing `hello` triggers the classic lab greeting |
-| Click anywhere | World-line shift — HUD glitch + Kurisu startles |
 | Click her head / body | She reacts with a motion / expression |
 | Click her hands | Cycles arm pose (crossed/straight) with shy blush + random emotional reactions |
-| Click twice on her canvas | Returns to center stage |
+| Press and hold on her | Hold-to-pet: blush + soft body motion, progressively happier the more you pet |
+| Click her shadow | Startled hop — a distinct reaction from a normal click |
+| Double-click her canvas | Surprise + returns to center stage |
+| Switch away from the desktop | HUD dims, Kurisu relaxes; on return she peeks and greets you |
 
 ## Project structure
 
@@ -78,5 +90,12 @@ Kurisu's replies use the first available tier, in order:
 - **Audio-reactive lip-sync**: vocal frequency bands drive natural mouth opening/closing with smoothed transitions; mouth form adjusts based on frequency content.
 - **Expanded hit areas**: hands are now separate clickable hit areas that toggle an arm-crossed pose with shy blush reactions.
 - **New emotion states**: smug, proud, and jealous emotions with custom aura colors and parameter tweaks.
+- **Pupil dilation**: the `EyeballSize` parameter is driven live by emotion, cursor proximity to her face, and startle flashes — dilated in wonder, narrowed in anger or sleepiness.
+- **Blend-shape face layers**: the Smile/Sad/Angry/Surprissed/Scared blend shapes are written per emotion on top of expression assets for clearer moods.
+- **Rare expression easter eggs**: self-scheduling TongueOut/Tears/RageSign/Yandere moments with long, emotion-tied cooldowns (interrupted by speech except for tears/rage).
+- **Rare ambient motions**: the Special motion group (haru_g_idle / xhiyori_m03) plays occasionally when she's calm and unoccupied, never during speech, petting, holds, or an active easter egg.
+- **Stage camera**: entrance fade-in with a settle on load, cursor-following parallax (±10px, gated while dragging/pet mode), and a proximity zoom up to ~4.5% when hovering her face.
+- **Beat bob**: `triggerBeat()` decays a quick side-to-side + forward/back body lean on each bass kick (fed from wallpaper.js's beat detector).
+- **Cheek pokes**: spatial face-hit detection in `_onHit` — taps on the lower side of the head trigger a puffed-annoyed reaction with a RageSign flicker and a body recoil instead of a startle.
 - **Interactive pet animations**: dragging Kurisu triggers surprise reactions; repeated petting makes her progressively happier.
 - **Performance-aware animations**: animation speed and physics intensity scale with the performance governor.

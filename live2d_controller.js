@@ -21,23 +21,23 @@ const EMOTION_AURA = {
     content:       { r: 255, g: 170, b: 180, glow: 0.07 },
     amused:        { r: 255, g: 175, b: 200, glow: 0.11 },
     smug:          { r: 255, g: 200, b: 120, glow: 0.09, flash: true },
-    proud:         { r: 200, g: 160, b: 255, glow: 0.13, flash: true },
+    proud:         { r: 255, g: 130, b: 110, glow: 0.13, flash: true },
     jealous:       { r: 255, g:  60, b: 160, glow: 0.18, flash: true },
     happy:         { r: 255, g: 120, b: 170, glow: 0.11 },
     excited:       { r: 255, g:  95, b: 150, glow: 0.16, flash: true },
     surprised:     { r: 255, g: 180, b: 200, glow: 0.14, flash: true },
-    curious:       { r: 210, g: 125, b: 200, glow: 0.08 },
-    focused:       { r: 200, g: 100, b: 255, glow: 0.07 },
-    confused:      { r: 220, g: 180, b: 240, glow: 0.09 },
-    thinking:      { r: 180, g: 175, b: 255, glow: 0.07 },
+    curious:       { r: 235, g: 120, b: 140, glow: 0.08 },
+    focused:       { r: 230, g:  90, b: 110, glow: 0.07 },
+    confused:      { r: 240, g: 150, b: 170, glow: 0.09 },
+    thinking:      { r: 230, g:  80, b: 100, glow: 0.07 },
     angry:         { r: 255, g:  65, b:  70, glow: 0.20, flash: true },
     annoyed:       { r: 255, g: 130, b:  75, glow: 0.10 },
     frustrated:    { r: 255, g: 100, b:  65, glow: 0.14 },
-    sad:           { r: 120, g: 130, b: 220, glow: 0.03 },
-    bitter:        { r: 100, g: 120, b: 210, glow: 0.03 },
-    tired:         { r: 180, g: 120, b: 210, glow: 0.04 },
-    sleepy:        { r: 150, g: 100, b: 190, glow: 0.03 },
-    sleeping:      { r: 120, g:  80, b: 175, glow: 0.025 },
+    sad:           { r: 160, g:  70, b: 110, glow: 0.03 },
+    bitter:        { r: 140, g:  60, b:  90, glow: 0.03 },
+    tired:         { r: 170, g: 100, b: 120, glow: 0.04 },
+    sleepy:        { r: 150, g:  85, b: 110, glow: 0.03 },
+    sleeping:      { r: 120, g:  60, b:  90, glow: 0.025 },
 };
 
 class Live2DController {
@@ -80,6 +80,15 @@ class Live2DController {
         this._petDragCount = 0;      // total drag interactions for reactions
         this._petReactionActive = false; // prevents overlapping pet reactions
         this._lastPetInteraction = 0; // timestamp of last drag interaction
+
+        // "Peek" reaction: brief glance toward the side the user returned from.
+        this._peek = { active: false, dir: 1, started: 0, until: 0 };
+        this._peekEnv = 0;          // eased envelope (0..1) set by _updatePeek
+        this._userAway = false;     // true while the user is away (focus loss / pause)
+
+        // Hold-to-pet: press and hold on the model without dragging.
+        this._holdTimer = null;     // pending "hold" timer from pointerdown
+        this._holding = false;      // true once the hold has fired
 
         // Head sway system (Phase 15/Alive enhancements)
         this._headSway = {
@@ -221,6 +230,30 @@ class Live2DController {
         this._lastEmotionCheck = 0;       // throttle for the mood evaluator
         this._lastExpression = undefined; // last expression asset applied
 
+        // Pupil dilation: live "Eyeball Size" layer driven by emotion + proximity
+        this._pupilTarget = 1.0;
+
+        // Rare expression easter eggs (blep / tears / rage / yandere moments)
+        this._egg = { type: null, until: 0, nextAt: performance.now() + 20000 + Math.random() * 15000 };
+
+        // Stage & camera polish: entrance fade, mouse parallax, proximity zoom
+        this._baseX = 0;
+        this._baseY = 0;
+        this._baseScale = 1;
+        this._parallaxX = 0;
+        this._parallaxY = 0;
+        this._camZoom = 1;
+        this._draggingNow = false;
+        this._entrance = { active: false, start: 0, duration: 1100 };
+
+        // Beat-reactive body bob (fed by triggerBeat from wallpaper.js)
+        this._beatBob = { pulse: 0, phase: 0 };
+
+        // Cheek pokes: spatial face hit detection + recoil state
+        this._lastPoke = 0;
+        this._lastTap = null;
+        this._pokeRecoilUntil = 0;
+
         // Speech/lip-sync state
         this._speechOffTimer = null;      // delayed isSpeaking=false timer
     }
@@ -332,6 +365,119 @@ class Live2DController {
     }
 
     /**
+     * User switched away (window focus loss, Lively pause, lock/screensaver).
+     * She relaxes into a low-energy state while they're gone. If the model is
+     * paused by Lively the reaction just doesn't render — harmless.
+     */
+    onUserAway() {
+        this._userAway = true;
+        if (this._ready && !this._paused && this.model) {
+            this.setEmotion('tired');
+        }
+    }
+
+    /**
+     * "Peek" reaction on user return: a quick glance toward the side they came
+     * back from (random left/right), eyes tracking up, with a curious face.
+     * The _peek state drives head/eye offsets until `until` passes.
+     */
+    triggerPeek() {
+        this._userAway = false;
+        if (!this._ready || !this.model) return;
+        const now = performance.now();
+        this._peek.active = true;
+        this._peek.dir = Math.random() < 0.5 ? -1 : 1;
+        this._peek.started = now;
+        this._peek.until = now + 2400;
+        this._peekEnv = 0;
+        this.setEmotion('curious', 2600);
+    }
+
+    /**
+     * Shadow tap: clicking her feet/grounding shadow is its own interaction —
+     * a startled hop, occasionally with a line. Called from wallpaper.js.
+     */
+    interactShadow() {
+        if (!this._ready || !this.model) return;
+        const now = performance.now();
+        this.triggerSurprise();
+        if (this.model.motion && this._isCubism4) {
+            try { this.model.motion('TapBody'); } catch (e) { /* optional */ }
+        }
+        if (typeof this.onInteract === 'function' && now - (this._lastShadowLine || 0) > 15000 && Math.random() < 0.5) {
+            this._lastShadowLine = now;
+            const line = this._petLine();
+            if (line) this.onInteract(line);
+        }
+    }
+
+    /**
+     * Hold-to-pet: press and hold on the model without dragging. Reactions get
+     * progressively happier the more you pet her, with a shy blush and a soft
+     * body motion. Only one hold reaction at a time.
+     */
+    _petOnHold() {
+        if (!this._ready || !this.model) return;
+        this._petDragCount = (this._petDragCount || 0) + 1;
+        this._lastPetInteraction = performance.now();
+        if (this._petReactionActive) return;
+        this._petReactionActive = true;
+
+        const deep = this._petDragCount > 2;
+        this.setEmotion(deep ? 'happy' : 'content', 2500);
+        if (this.blushLevel < 1) this.blushLevel = 1;
+        if (this.model.motion) {
+            try { this.model.motion(this._isCubism4 ? 'TapBody' : 'tap_body'); } catch (e) { /* optional */ }
+        }
+        const now = performance.now();
+        if (typeof this.onInteract === 'function' && now - (this._lastHoldLine || 0) > 12000 && Math.random() < 0.55) {
+            this._lastHoldLine = now;
+            const line = this._petLine();
+            if (line) this.onInteract(line);
+        }
+        setTimeout(() => { this._petReactionActive = false; }, 2500);
+    }
+
+    _petLine() {
+        // KURISU_PET_LINES lives in wallpaper.js's global scope (const, so not
+        // on window) — resolve by name at call time.
+        const lines = (typeof KURISU_PET_LINES !== 'undefined') ? KURISU_PET_LINES : null;
+        if (lines && lines.length) {
+            return lines[Math.floor(Math.random() * lines.length)];
+        }
+        return null;
+    }
+
+    /**
+     * Cheek poke reaction: puffed, annoyed — blush, a RageSign flicker (reused
+     * easter-egg layer), a sharp recoil bob, and occasionally a sassy line.
+     */
+    _pokeCheek() {
+        if (!this._ready) return;
+        this._lastPoke = performance.now();
+        this.setEmotion('annoyed', 2600);
+        if (this.blushLevel < 1) this.blushLevel = 1;
+        // RageSign flicker via the easter-egg layer
+        this._egg.type = 'rage';
+        this._egg.until = performance.now() + 700;
+        this._egg.nextAt = performance.now() + 60000;
+        // Sharp recoil bob, decayed in _updatePokeRecoil
+        this._pokeRecoilUntil = performance.now() + 350;
+        if (typeof this.onInteract === 'function' && Math.random() < 0.6) {
+            const line = this._pokeLine();
+            if (line) this.onInteract(line);
+        }
+    }
+
+    _pokeLine() {
+        const lines = (typeof KURISU_POKE_LINES !== 'undefined') ? KURISU_POKE_LINES : null;
+        if (lines && lines.length) {
+            return lines[Math.floor(Math.random() * lines.length)];
+        }
+        return null;
+    }
+
+    /**
      * Toggle pet mode: a smaller, freely draggable Kurisu. Position persists
      * via wallpaper.js (localStorage); disabling re-centers her on stage.
      */
@@ -399,6 +545,7 @@ class Live2DController {
         this.model.x = nx * view.width;
         this.model.y = ny * view.height;
         this._dragged = true; // keep her there on resize
+        this._recordBasePose();
         this._syncGroundShadow();
         if (this.app.renderer) this.app.renderer.render(this.app.stage);
     }
@@ -680,49 +827,6 @@ class Live2DController {
     }
 
     /**
-     * Texture LOD switching: dynamically scale texture resolution based on performance.
-     * The model uses 4096px textures at full quality; this scales down the resolution
-     * at lower performance levels to reduce VRAM usage.
-     */
-    _updateTextureLOD() {
-        if (!this.app || !this.app.renderer || !this.app.renderer.options) return;
-        
-        const resolution = this.app.renderer.options.resolution || 1.0;
-        const currentLODs = this.app.renderer.options.textureLOD;
-        
-        // Texture LOD levels:
-        // Level 0: Full resolution (4096px)
-        // Level 1: Half resolution (2048px) 
-        // Level 2: Quarter resolution (1024px)
-        // We adjust by limiting the max texture size and enabling mipmapping
-        
-        let maxTextureSize = 4096;
-        if (resolution <= 0.5) maxTextureSize = 1024;
-        else if (resolution <= 0.75) maxTextureSize = 2048;
-        
-        try {
-            const gl = this.app.renderer.gl;
-            if (gl) {
-                // Update max texture size hint - this affects how textures are downsampled
-                // Note: This is a hint, not a hard limit, but combined with resolution
-                // scaling it provides effective LOD management
-                if (gl.getError) gl.getError(); // clear errors
-            }
-        } catch (e) {
-            // WebGL context might not be ready
-            console.warn('[L2D] Texture LOD update skipped:', e);
-        }
-        
-        // Update model rendering quality based on resolution
-        if (this.model && this.model.internalModel) {
-            const coreModel = this.model.internalModel.coreModel;
-            if (coreModel && typeof coreModel.setRenderingTexture !== 'undefined') {
-                // Adjust any runtime texture parameters here
-            }
-        }
-    }
-
-    /**
      * Initialize the PixiJS app and load the Live2D model.
      */
     async init() {
@@ -825,10 +929,11 @@ this.app = new PIXI.Application({
             // body sway, blinking, idle eyes, brows) handles subtle lifelike motion.
             // this.model.motion(idleMotionGroup);
 
-            // Disable the ambient motion system that randomly plays TapBody/Special
-            // (foreign motions like xhiyori_m03, Out From Camera that animate
-            // ParamBodyAngle/ParamAngle heavily). Our lifelike loop covers it.
-            // this._startAmbientSystem();
+            // Rare ambient motions: occasionally play a Special-group motion
+            // (haru_g_idle, xhiyori_m03) as a brief breath of life. Kept rare
+            // and heavily gated so it never stomps on speech, petting, or an
+            // active reaction — the lifelike loop still handles idle motion.
+            this._startRareAmbientMotions();
 
             // Start rare ambient moods (soft smile / blush moments)
             this._startAmbientMoods();
@@ -837,6 +942,11 @@ this.app = new PIXI.Application({
             this._startLifelikeAnimations();
 
             this._ready = true;
+
+            // Entrance: fade her in with a gentle settle right after load
+            this._entrance.active = true;
+            this._entrance.start = performance.now();
+            this.model.alpha = 0;
 
             // If pet mode was restored before the model finished loading,
             // place her at the saved spot now that we can.
@@ -886,6 +996,9 @@ this.app = new PIXI.Application({
             this._updateProximity();
             this._updateAmbientMood(clampedDt);
             this._updatePhysicsScale(); // apply audio-reactive physics scaling
+            this._updatePeek(timestamp, clampedDt);
+            this._updateBeatBob(clampedDt, coreModel);
+            this._updatePokeRecoil(timestamp, coreModel);
             this._updateBlink(timestamp, clampedDt, coreModel);
             this._updateBreathing(clampedDt, coreModel);
             this._updateBodySway(clampedDt, coreModel);
@@ -897,8 +1010,17 @@ this.app = new PIXI.Application({
             // Emotion engine (throttled internally to ~2.5Hz)
             this._updateEmotion(timestamp);
 
+            // Emotion-layer parameters: pupil life, blend-shape fidelity, easter eggs
+            this._updatePupils(timestamp);
+            this._updateEmotionLayers();
+            this._updateEasterEggs(timestamp);
+
             // Apply custom manual overrides (like crossed arms and blushing cheeks)
             this._applyManualOverrides(coreModel);
+            this._applyEasterEggLayer(coreModel);
+
+            // Stage camera: entrance fade, parallax drift, and proximity zoom
+            this._updateCamera(clampedDt);
         };
 
         this._rafHandle = requestAnimationFrame(animate);
@@ -958,6 +1080,251 @@ this.app = new PIXI.Application({
             else if (frownEmotions.includes(label)) mouthForm = -1.0;
             
             this.setParameter('PARAM_MOUTH_FORM', 'PARAM_MOUTH_FORM', mouthForm);
+        }
+    }
+
+    /**
+     * Pupil life: drive the unused "Eyeball Size" parameter from emotion,
+     * proximity, and a hard startle flash on surprise. Smooths through the
+     * shared parameter pipeline so dilation reads as a slow, organic change.
+     */
+    _updatePupils(now) {
+        if (!this._ready || this._isCubism4 !== true) return;
+        const label = this.currentEmotion;
+
+        const PUPIL = {
+            excited: 1.35, surprised: 1.45, scared: 1.5, curious: 1.2,
+            thinking: 1.15, happy: 1.2, amused: 1.1, smug: 1.05, proud: 1.15,
+            content: 1.02, calm: 1.0, neutral: 1.0,
+            sad: 0.8, tired: 0.75, sleepy: 0.7, sleeping: 0.6, bitter: 0.72,
+            angry: 0.6, annoyed: 0.65, frustrated: 0.6, stress: 0.6, jealous: 0.7,
+        };
+        let target = (PUPIL[label] !== undefined) ? PUPIL[label] : 1.0;
+
+        // She focuses on you when the cursor hovers near her face
+        target += this._proximity * 0.15;
+
+        // Startle flash dilates the pupils hard, then the smoothing decays it
+        if (now < this._surpriseUntil) target = Math.max(target, 1.45);
+
+        this.setParameter('PARAM_EYE_SIZE', 'EyeballSize', target, true);
+    }
+
+    /**
+     * Emotion fidelity layers: drive the model's Smile/Sad/Angry/Surprissed/
+     * Scared blend shapes on top of the expression asset so each mood reads
+     * clearly instead of leaning on a single expression swap.
+     */
+    _updateEmotionLayers() {
+        if (!this._ready || this._isCubism4 !== true) return;
+        const label = this.currentEmotion;
+
+        let smile = 0, sad = 0, angry = 0, surprised = 0, scared = 0;
+
+        if (['happy', 'excited'].includes(label)) smile = 0.55;
+        else if (['amused', 'smug', 'proud'].includes(label)) smile = 0.4;
+        else if (['content', 'calm'].includes(label)) smile = 0.3;
+
+        if (['sad', 'tired', 'bitter', 'sleepy', 'sleeping'].includes(label)) sad = 0.5;
+        if (['angry', 'annoyed', 'frustrated', 'stress', 'jealous'].includes(label)) angry = 0.5;
+        if (['surprised', 'curious', 'confused'].includes(label)) surprised = 0.45;
+        if (label === 'scared') scared = 0.6;
+
+        this.setParameter('Smile', 'Smile', smile, true);
+        this.setParameter('Sad', 'Sad', sad, true);
+        this.setParameter('Angry', 'Angry', angry, true);
+        this.setParameter('Surprissed', 'Surprissed', surprised, true);
+        this.setParameter('Scared', 'Scared', scared, true);
+    }
+
+    /**
+     * Rare expression easter eggs: tiny bespoke moments with the model's
+     * otherwise-unused parameters — a playful tongue-out "blep", a tear that
+     * swells during sad moods, the anger vein, or a blink-and-you-miss-it
+     * yandere glint. Self-schedules with long, emotion-tied cooldowns.
+     */
+    _updateEasterEggs(now) {
+        if (!this._ready || this._paused) return;
+
+        if (this._egg.type) {
+            // Speech interrupts playful eggs but lets sad/angry ones linger
+            if (this.isSpeaking && this._egg.type !== 'tears' && this._egg.type !== 'rage') {
+                this._egg.type = null;
+                this._egg.until = 0;
+                return;
+            }
+            if (now >= this._egg.until) {
+                this._egg.type = null;
+            }
+            return;
+        }
+        if (now < this._egg.nextAt) return;
+
+        const label = this.currentEmotion;
+        const calm = !this.isSpeaking && !this._petMode;
+        const wakeful = !['sleepy', 'sleeping', 'sad', 'tired', 'bitter'].includes(label);
+        const options = [];
+
+        // Playful blep — only during calm, wakeful moments
+        if (calm && wakeful && !['angry', 'annoyed', 'frustrated', 'stress', 'scared'].includes(label)) {
+            options.push('blep');
+        }
+        // A tear that swells during sad/low moods
+        if (['sad', 'tired', 'bitter', 'sleepy', 'sleeping'].includes(label)) {
+            options.push('tears');
+        }
+        // The anger vein pops when she's genuinely annoyed
+        if (['angry', 'annoyed', 'frustrated', 'stress', 'jealous'].includes(label)) {
+            options.push('rage');
+        }
+        // Hidden yandere glint — extra rare
+        if (calm && wakeful && Math.random() < 0.25) {
+            options.push('yandere');
+        }
+
+        if (!options.length) {
+            this._egg.nextAt = now + 40000 + Math.random() * 30000;
+            return;
+        }
+
+        const type = options[Math.floor(Math.random() * options.length)];
+        this._egg.type = type;
+        this._egg.until = now + (type === 'yandere' ? 1400 : 1500 + Math.random() * 1000);
+        this._egg.nextAt = now + (type === 'yandere' ? 150000 : 50000 + Math.random() * 40000);
+    }
+
+    /**
+     * Write the active easter egg to the model's rare parameters. Snap-on,
+     * short-lived (1–2.5s), then the smoothed emotion layers take over.
+     */
+    _applyEasterEggLayer(coreModel) {
+        if (this._isCubism4 !== true || !coreModel || !coreModel.setParameterValueById) return;
+        const type = this._egg.type || '';
+        coreModel.setParameterValueById('TongueOut', type === 'blep' ? 1.0 : 0.0);
+        coreModel.setParameterValueById('Tears', type === 'tears' ? 1.0 : 0.0);
+        coreModel.setParameterValueById('RageSign', type === 'rage' ? 1.0 : 0.0);
+        coreModel.setParameterValueById('Yandere', type === 'yandere' ? 1.0 : 0.0);
+    }
+
+    /**
+     * Remember the model's "resting" pose (position + scale). The camera
+     * subsystem re-applies parallax/zoom offsets on top of this base every
+     * frame, so it must be refreshed whenever something explicitly moves her
+     * (fit, drag, pet placement).
+     */
+    _recordBasePose() {
+        if (!this.model) return;
+        this._baseX = this.model.x;
+        this._baseY = this.model.y;
+        this._baseScale = this.model.scale.x;
+    }
+
+    /**
+     * Stage camera: entrance fade-in, a soft cursor parallax drift, and a
+     * gentle zoom when the cursor hovers near her face. Position/scale writes
+     * are skipped while she's being dragged or in pet mode so she isn't
+     * yanked out of the player's hands.
+     */
+    _updateCamera(dt) {
+        if (!this.model) return;
+
+        // Entrance: fade in + a barely-there settle of the scale, once on load
+        const en = this._entrance;
+        let entT = 0;
+        if (en.active) {
+            entT = Math.min(1, (performance.now() - en.start) / en.duration);
+            const ease = 1 - Math.pow(1 - entT, 3);
+            this.model.alpha = ease;
+            if (entT >= 1) {
+                en.active = false;
+                this.model.alpha = 1;
+            }
+        }
+
+        // Parallax: subtle drift with the cursor (only while it's on-stage)
+        const nx = this._cursorNX;
+        const ny = this._cursorNY;
+        const inView = nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1;
+        const k = Math.min(1, dt * 0.003);
+        const parTargetX = (!inView || this._draggingNow) ? 0 : (nx - 0.5) * 2 * 10;
+        const parTargetY = (!inView || this._draggingNow) ? 0 : (ny - 0.5) * 2 * 7;
+        this._parallaxX += (parTargetX - this._parallaxX) * k;
+        this._parallaxY += (parTargetY - this._parallaxY) * k;
+
+        // Proximity zoom: she leans closer when you hover her face
+        const zoomTarget = (this._draggingNow || this._petMode) ? 1 : 1 + this._proximity * 0.045;
+        this._camZoom += (zoomTarget - this._camZoom) * Math.min(1, dt * 0.002);
+
+        let scale = this._baseScale * this._camZoom;
+        if (en.active) {
+            scale *= (1.025 - 0.025 * (1 - Math.pow(1 - entT, 3)));
+        }
+
+        if (!this._draggingNow && !this._petMode) {
+            this.model.x = this._baseX + this._parallaxX;
+            this.model.y = this._baseY + this._parallaxY;
+            this.model.scale.set(scale);
+        }
+    }
+
+    /**
+     * Beat-reactive body bob: each bass kick (fed by wallpaper.js via
+     * triggerBeat) throws a quick, decaying lean + lift into the body angles
+     * so she dances along with the audio ring and the dust field.
+     */
+    triggerBeat() {
+        if (!this._ready || this._paused || this._petMode) return;
+        this._beatBob.pulse = 1;
+        this._beatBob.phase = 0;
+    }
+
+    _updateBeatBob(dt, coreModel) {
+        const bb = this._beatBob;
+        if (bb.pulse <= 0.01) return;
+        bb.phase += dt * 0.006;
+        const env = bb.pulse * Math.exp(-bb.phase * 1.6);
+        bb.pulse = Math.max(0, bb.pulse - dt * 0.0035);
+
+        const lean = Math.sin(bb.phase * 6) * env * 1.6;                       // side-to-side sway per kick
+        const nod = Math.sin(bb.phase * 6 + Math.PI * 0.5) * env * 0.9;        // forward/back bob
+        this.addToParameter('PARAM_BODY_ANGLE_Z', 'ParamBodyAngleZ', lean);
+        this.addToParameter('PARAM_BODY_ANGLE_X', 'ParamBodyAngleX', nod);
+    }
+
+    /**
+     * Cheek-poke recoil: a single sharp forward/back body bob right after a
+     * cheek poke, decaying over ~350ms.
+     */
+    _updatePokeRecoil(now, coreModel) {
+        if (this._pokeRecoilUntil && now < this._pokeRecoilUntil) {
+            const t = (this._pokeRecoilUntil - now) / 350; // 1 → 0
+            const kick = Math.sin(t * Math.PI) * t * 3.5;
+            this.addToParameter('PARAM_BODY_ANGLE_X', 'ParamBodyAngleX', kick);
+        } else {
+            this._pokeRecoilUntil = 0;
+        }
+    }
+
+    /**
+     * Peek envelope: while the peek reaction is active, advance a smooth
+     * ease-in / hold / ease-out envelope that _updateHeadSway and
+     * _updateIdleEyes read to aim her glance.
+     */
+    _updatePeek(now, dt) {
+        const pk = this._peek;
+        if (!pk.active) return;
+        if (now >= pk.until) {
+            pk.active = false;
+            this._peekEnv = 0;
+            return;
+        }
+        const t = (now - pk.started) / (pk.until - pk.started);
+        if (t < 0.35) {
+            this._peekEnv = t / 0.35;          // look up
+        } else if (t > 0.75) {
+            this._peekEnv = 1 - (t - 0.75) / 0.25; // ease back down
+        } else {
+            this._peekEnv = 1;                 // hold the glance
         }
     }
 
@@ -1030,8 +1397,20 @@ this.app = new PIXI.Application({
      * dist 0 (cursor on her face) -> proximity 1, screen edge -> ~0.
      */
     _updateProximity() {
-        const dnx = (this._cursorNX - 0.5) * 2;
-        const dny = (this._cursorNY - 0.5) * 2;
+        // Proximity is measured from Kurisu's *actual* on-screen face position,
+        // not the canvas center — so hover reactions (blush, pupil focus, the
+        // camera zoom, near-face emotion) keep working even when she's been
+        // dragged off-center or shrunk down in pet mode.
+        if (!this.model || !this.app || !this.app.view) {
+            this._proximity = 0;
+            return;
+        }
+        const view = this.app.view;
+        const hh = this.model.height * this.model.scale.y;
+        const faceNX = this.model.x / view.width;
+        const faceNY = (this.model.y - hh * 0.28) / view.height;
+        const dnx = (this._cursorNX - faceNX) * 2;
+        const dny = (this._cursorNY - faceNY) * 2;
         const dist = Math.sqrt(dnx * dnx + dny * dny);
         this._proximity = Math.max(0, Math.min(1, 1 - dist));
         this._updateAura();
@@ -1233,6 +1612,17 @@ this.app = new PIXI.Application({
             hs.valueZ = Math.sin(hs.phaseZ) * hs.amplitudeZ * ampMult;
         }
 
+        // Peek override: on a return greeting she turns her head toward the
+        // side the user came back from and lifts it slightly. Blends with the
+        // sway so the look-in is smooth rather than a snap.
+        const pkEnv = this._peek && this._peek.active ? (this._peekEnv || 0) : 0;
+        if (pkEnv > 0) {
+            const pkDir = this._peek.dir || 1;
+            hs.valueY = hs.valueY * (1 - pkEnv) + pkDir * 13 * pkEnv;
+            hs.valueX = hs.valueX * (1 - pkEnv) + 4.5 * pkEnv;
+            hs.valueZ = hs.valueZ * (1 - pkEnv);
+        }
+
         this.addToParameter('PARAM_ANGLE_X', 'ParamAngleX', hs.valueX);
         this.addToParameter('PARAM_ANGLE_Y', 'ParamAngleY', hs.valueY);
         this.addToParameter('PARAM_ANGLE_Z', 'ParamAngleZ', hs.valueZ);
@@ -1246,6 +1636,18 @@ this.app = new PIXI.Application({
         const e = this._idleEyes;
         const ma = this._mouseActivity;
         const ga = this._gazeAversion;
+
+        // 0. Peek override: while she glances up at a returning user the eyes
+        // track toward the same side — beats thinking/aversion/typing gaze.
+        const pkEnv = this._peek && this._peek.active ? (this._peekEnv || 0) : 0;
+        if (pkEnv > 0) {
+            const lerpFactor = 1.0 - Math.pow(1.0 - 0.006, dt);
+            e.currentX += ((this._peek.dir * 0.65) - e.currentX) * lerpFactor;
+            e.currentY += (-0.35 - e.currentY) * lerpFactor; // up, where they'd be
+            this.addToParameter('PARAM_EYE_BALL_X', 'ParamEyeBallX', e.currentX);
+            this.addToParameter('PARAM_EYE_BALL_Y', 'ParamEyeBallY', e.currentY);
+            return;
+        }
 
         // 1. Thinking / Memory Retrieval gaze aversion
         if (this.isThinking) {
@@ -1382,12 +1784,29 @@ this.app = new PIXI.Application({
      */
     _onHit(hitAreas) {
         const isC4 = this._isCubism4;
+        const now = performance.now();
         const headName = isC4 ? 'Head' : 'head';
         const bodyName = isC4 ? 'Body' : 'body';
         const handLName = isC4 ? 'HandL' : 'hand_l';
         const handRName = isC4 ? 'HandR' : 'hand_r';
 
         if (hitAreas.includes(headName)) {
+            // Cheek pokes: a head tap on the lower side of the face reads as a
+            // poke (puffed cheeks, annoyed, recoil) instead of a startled head tap.
+            if (isC4 && this._lastTap && now - this._lastPoke > 2500) {
+                const hw = this.model.width * this.model.scale.x;
+                const hh = this.model.height * this.model.scale.y;
+                const dx = this._lastTap.x - this.model.x;
+                const dy = this._lastTap.y - (this.model.y - hh * 0.28);
+                const inFaceWidth = Math.abs(dx) < hw * 0.11;
+                const inFaceHeight = Math.abs(dy) < hh * 0.10;
+                const offCenter = Math.abs(dx) > hw * 0.015;
+                const lowerFace = dy > -hh * 0.01;
+                if (inFaceWidth && inFaceHeight && offCenter && lowerFace) {
+                    this._pokeCheek();
+                    return;
+                }
+            }
             if (isC4) {
                 this.model.motion('TapHead');
                 this.triggerSurprise(); // head taps get a startled face
@@ -1434,10 +1853,42 @@ this.app = new PIXI.Application({
     }
 
     /**
+     * Rare ambient motions: a much lighter successor to _startAmbientSystem.
+     * Plays only the Special group (haru_g_idle, xhiyori_m03) and only during
+     * calm, wakeful, unoccupied moments — roughly once a minute, never on top
+     * of speech, petting, a hold, or an easter egg.
+     */
+    _startRareAmbientMotions() {
+        if (this._isCubism4 !== true) return;
+        const schedule = () => {
+            const delay = 45000 + Math.random() * 45000;
+            this._ambientTimer = setTimeout(() => {
+                this._ambientTimer = null;
+                if (!this._ready || this._paused || this.isSpeaking ||
+                    this._petMode || this._holdTimer || this._egg.type ||
+                    !this.model || !this.model.motion) {
+                    schedule();
+                    return;
+                }
+                const label = this.currentEmotion;
+                if (['angry', 'annoyed', 'frustrated', 'stress', 'scared',
+                     'sad', 'bitter', 'sleepy', 'sleeping'].includes(label)) {
+                    schedule();
+                    return;
+                }
+                try {
+                    this.model.motion('Special');
+                } catch (e) { /* optional — never break the loop */ }
+                schedule();
+            }, delay);
+        };
+        schedule();
+    }
+
+    /**
      * Ambient motion system — makes the character feel alive.
      */
-    _startAmbientSystem() {
-        const scheduleNext = () => {
+    _startAmbientSystem() {        const scheduleNext = () => {
             const delay = 15000 + Math.random() * 15000;
             this._ambientTimer = setTimeout(() => {
                 if (!this._ready) {
@@ -1513,6 +1964,7 @@ this.app = new PIXI.Application({
             this.model.y = (ch - mh * scale) / 2;
         }
 
+        this._recordBasePose();
         this.app.renderer.render(this.app.stage);
     }
 
@@ -1599,6 +2051,13 @@ this.app = new PIXI.Application({
             dragStart.modelY = this.model.y;
             dragging = true;
             dragMode = 'tap';
+            // Hold-to-pet: press and hold without dragging counts as petting.
+            this._holding = false;
+            clearTimeout(this._holdTimer);
+            this._holdTimer = setTimeout(() => {
+                this._holding = true;
+                this._petOnHold();
+            }, 650);
             if (view.setPointerCapture) {
                 try { view.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
             }
@@ -1609,14 +2068,21 @@ this.app = new PIXI.Application({
             const p = canvasToWorld(e.clientX, e.clientY);
             const dx = p.x - dragStart.x;
             const dy = p.y - dragStart.y;
+            // Moving the pointer cancels any pending hold (this is a drag/tap).
+            if (Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+                clearTimeout(this._holdTimer);
+                this._holdTimer = null;
+            }
             if (dragMode === 'tap' && this._petMode && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
                 dragMode = 'drag';
                 this._dragged = true;
+                this._draggingNow = true;
                 this.triggerSurprise(); // she notices being picked up
             }
             if (dragMode === 'drag') {
                 this.model.x = Math.min(view.width * 0.88, Math.max(view.width * 0.12, dragStart.modelX + dx));
                 this.model.y = Math.min(view.height * 0.98, Math.max(view.height * 0.3, dragStart.modelY + dy));
+                this._recordBasePose();
                 this._syncGroundShadow();
                 this._petInteraction(Math.hypot(dx, dy));
                 this.app.renderer.render(this.app.stage);
@@ -1625,25 +2091,39 @@ this.app = new PIXI.Application({
 
         const finishPointer = (e) => {
             if (!dragging) return;
+            clearTimeout(this._holdTimer);
+            this._holdTimer = null;
             dragging = false;
-            if (dragMode === 'tap') {
+            this._draggingNow = false;
+            if (dragMode === 'tap' && !this._holding) {
                 // A real tap: let the model react to what was hit
                 const p = canvasToWorld(e.clientX, e.clientY);
+                this._lastTap = p;
                 this.model.tap(p.x, p.y);
             } else if (this._dragged) {
                 // A drag just ended — persist her new spot
                 if (typeof this.onPetMoved === 'function') this.onPetMoved();
             }
+            this._holding = false;
         };
         view.addEventListener('pointerup', finishPointer);
         view.addEventListener('pointercancel', finishPointer);
 
-        // Double-click: put her back on center stage
+        // Double-click: she startles, and occasionally blurts something before
+        // snapping back to center stage.
         view.addEventListener('dblclick', () => {
+            clearTimeout(this._holdTimer);
+            this._holdTimer = null;
             this._dragged = false;
             this._fitModel();
             this._syncGroundShadow();
             this.triggerSurprise();
+            const now = performance.now();
+            if (typeof this.onInteract === 'function' && now - (this._lastDblClickLine || 0) > 15000 && Math.random() < 0.5) {
+                this._lastDblClickLine = now;
+                const line = this._petLine();
+                if (line) this.onInteract(line);
+            }
         });
     }
 
@@ -1659,7 +2139,6 @@ this.app = new PIXI.Application({
                 this._fitModel();
             }
             this.app.renderer.render(this.app.stage);
-            this._updateTextureLOD();
         }
     }
 
@@ -1703,6 +2182,7 @@ this.app = new PIXI.Application({
         if (this._idleTimer) clearTimeout(this._idleTimer);
         if (this._ambientMood && this._ambientMood.timer) clearTimeout(this._ambientMood.timer);
         if (this._speechOffTimer) clearTimeout(this._speechOffTimer);
+        if (this._holdTimer) clearTimeout(this._holdTimer);
         if (this._rafHandle) {
             cancelAnimationFrame(this._rafHandle);
             this._rafHandle = null;

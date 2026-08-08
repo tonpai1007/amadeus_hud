@@ -39,8 +39,8 @@
 
 body {
   /* Day is the default scene; period classes swap the variables below. */
-  --scene-bg: #0a1626;
-  --scene-glow: #123a52;
+  --scene-bg: #150a0e;
+  --scene-glow: #3a1118;
   --scene-brightness: 1;
   --scene-sat: 1;
   --scene-hue: 0deg;
@@ -59,24 +59,24 @@ body {
 /* Scene periods: dawn (05-07), day (08-15), dusk (16-18), night (19-04).
    Subtle hue/brightness drift over real local time. */
 body.dawn-mode {
-  --scene-bg: #0d1a2e;
-  --scene-glow: #1c4860;
+  --scene-bg: #180d12;
+  --scene-glow: #451a26;
   --scene-brightness: 0.92;
   --scene-sat: 1.04;
   --scene-hue: -4deg;
 }
 
 body.day-mode {
-  --scene-bg: #12263a;
-  --scene-glow: #1e5a78;
+  --scene-bg: #1a0e12;
+  --scene-glow: #4a1420;
   --scene-brightness: 1;
   --scene-sat: 1;
   --scene-hue: 0deg;
 }
 
 body.dusk-mode {
-  --scene-bg: #101d33;
-  --scene-glow: #274a72;
+  --scene-bg: #160c10;
+  --scene-glow: #401a24;
   --scene-brightness: 0.9;
   --scene-sat: 1.04;
   --scene-hue: 6deg;
@@ -84,14 +84,44 @@ body.dusk-mode {
 
 /* Night ops: colder, dimmer HUD between 19:00 and 04:00 */
 body.night-mode {
-  --scene-bg: #050a14;
-  --scene-glow: #0e2547;
+  --scene-bg: #0d0609;
+  --scene-glow: #1e0a10;
   --scene-brightness: 0.8;
   --scene-sat: 0.9;
   --scene-hue: 8deg;
 }
 
 /* Background Canvas Layouts */
+#bg-album {
+  position: absolute;
+  /* Bleed past the viewport edges so the blur never reveals a hard border */
+  top: -60px;
+  left: -60px;
+  right: -60px;
+  bottom: -60px;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  filter: blur(30px) brightness(0.45) saturate(1.15);
+  opacity: 0;
+  transition: opacity 1.5s ease;
+  pointer-events: none;
+}
+
+#bg-album.visible {
+  opacity: 0.85;
+}
+
+#bg-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1; /* ambient particles + edge strips above the album art */
+  pointer-events: none;
+}
+
 #live2d-canvas {
   position: absolute;
   top: 0;
@@ -137,8 +167,9 @@ body.night-mode {
   width: 46vmin;
   height: 8vmin;
   transform: translateX(-50%);
-  z-index: 1;
-  pointer-events: none;
+  z-index: 3; /* above the Live2D canvas so feet-taps hit the shadow */
+  pointer-events: auto; /* clicking her shadow is its own interaction */
+  cursor: pointer;
   background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.5), transparent 70%);
   filter: blur(3px);
 }
@@ -293,52 +324,36 @@ body.night-mode {
   content: '';
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(rgba(140, 210, 255, 0.05) 0.7px, transparent 1.1px);
+  background-image: radial-gradient(rgba(255, 110, 130, 0.05) 0.7px, transparent 1.1px);
   background-size: 3px 3px;
   mix-blend-mode: overlay;
 }
 
-/* World Line Shift FX (triggered on click) */
-.glitch-overlay {
-  position: fixed;
+/* Beat pulse: a soft red bloom that flashes with the kick of the music.
+   The class is re-applied by JS on each detected beat so the animation
+   restarts cleanly every time. */
+#beat-glow {
+  position: absolute;
   inset: 0;
-  z-index: 9998;
+  z-index: 9984;
   pointer-events: none;
   opacity: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(255, 0, 60, 0.05) 0 2px,
-    rgba(0, 200, 255, 0.04) 2px 4px,
-    transparent 4px 6px
-  );
-  mix-blend-mode: screen;
+  background: radial-gradient(ellipse at 50% 55%, rgba(255, 60, 90, 0.28), transparent 68%);
 }
 
-body.world-line-shifting #hud-container {
-  animation: worldline-jitter 0.42s steps(5, end);
+#beat-glow.beat {
+  animation: beat-flash 0.32s ease-out;
 }
 
-@keyframes worldline-jitter {
-  0% { transform: translate(0, 0) skewX(0deg); }
-  15% { transform: translate(-5px, 2px) skewX(3deg); }
-  30% { transform: translate(4px, -2px) skewX(-2deg); }
-  45% { transform: translate(-3px, 1px) skewX(1deg); }
-  60% { transform: translate(3px, -1px) skewX(-3deg); }
-  80% { transform: translate(-2px, 0) skewX(2deg); }
-  100% { transform: translate(0, 0) skewX(0deg); }
-}
-
-body.world-line-shifting .glitch-overlay {
-  animation: glitch-flash 0.42s steps(3, end);
-}
-
-@keyframes glitch-flash {
-  0% { opacity: 0; }
-  15% { opacity: 1; }
-  35% { opacity: 0.35; }
-  55% { opacity: 0.9; }
-  80% { opacity: 0.25; }
+@keyframes beat-flash {
+  0% { opacity: 1; }
   100% { opacity: 0; }
+}
+
+/* Drop the album-art blur entirely while idle: it's one of the few remaining
+   GPU-filter costs and power-saving mode shouldn't pay for it. */
+body.idle #bg-album {
+  opacity: 0;
 }
 
 /* Cyberpunk Digital Grid Overlay */
@@ -349,8 +364,8 @@ body.world-line-shifting .glitch-overlay {
   width: 100%;
   height: 100%;
    background-image: 
-     linear-gradient(rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.022) 1px, transparent 1px),
-     linear-gradient(90deg, rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.022) 1px, transparent 1px);
+     linear-gradient(rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.055) 1px, transparent 1px),
+     linear-gradient(90deg, rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.055) 1px, transparent 1px);
   background-size: 50px 50px;
   background-position: center;
   z-index: 3;
@@ -417,7 +432,7 @@ body.world-line-shifting .glitch-overlay {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px dashed rgba(138, 159, 196, 0.2);
+  border-bottom: 1px dashed rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.2);
   padding-bottom: 8px;
   margin-bottom: 12px;
 }
@@ -572,7 +587,7 @@ body.world-line-shifting .glitch-overlay {
 /* Now Playing (music metadata) */
 .now-playing {
   margin-top: 10px;
-  border-top: 1px dashed rgba(138, 159, 196, 0.2);
+  border-top: 1px dashed rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.2);
   padding-top: 8px;
   display: flex;
   flex-direction: column;
@@ -613,7 +628,7 @@ body.world-line-shifting .glitch-overlay {
   width: 100%;
   padding: 5px 8px;
   background: rgba(15, 18, 27, 0.6);
-  border: 1px dashed rgba(138, 159, 196, 0.25);
+  border: 1px dashed rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.25);
   cursor: pointer;
   font-family: var(--font-hud);
   font-size: 8px;
@@ -675,7 +690,7 @@ body.world-line-shifting .glitch-overlay {
 /* Phosphor Oscilloscope (top-right panel) */
 .world-line-monitor {
   margin-top: 12px;
-  border-top: 1px dashed rgba(138, 159, 196, 0.2);
+  border-top: 1px dashed rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.2);
   padding-top: 10px;
 }
 
@@ -715,8 +730,8 @@ body.world-line-shifting .glitch-overlay {
 }
 
 #wl-mind {
-  color: rgba(179, 136, 255, 0.95);
-  text-shadow: 0 0 6px rgba(179, 136, 255, 0.6);
+  color: rgba(255, 85, 170, 0.95);
+  text-shadow: 0 0 6px rgba(255, 85, 170, 0.6);
 }
 
 /* PANEL: Center HUD Banner */
@@ -782,11 +797,19 @@ body.world-line-shifting .glitch-overlay {
 }
 
 /* PANEL: Realtime News Feed (Bottom-Left) */
+/* PANEL: Realtime News Feed (Bottom-Left)
+   Absolutely anchored instead of grid-placed: the auto-sized grid rows
+   overflowed on short (720p) screens and pushed this panel's bottom edge
+   below the viewport. Out of flow, the panel always floats above the taskbar
+   and can never be clipped. */
 .bottom-left-panel {
-  grid-column: 1;
-  grid-row: 3;
-  align-self: end;
-  justify-self: start;
+  position: absolute;
+  left: 20px;
+  bottom: calc(20px + var(--taskbar-clear, 0px));
+  width: 500px;
+  height: 260px;
+  display: flex;
+  flex-direction: column;
 }
 
 .bottom-left-panel .panel-body {
@@ -879,14 +902,22 @@ body.world-line-shifting .glitch-overlay {
 
 /* --- CHAT TERMINAL (bottom-center) --- */
 .chat-panel {
-  grid-column: 1 / span 2;
-  grid-row: 4;
-  place-self: end center;
-  width: 460px;
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+  align-self: start;
+  width: 420px;
   max-width: 92vw;
   cursor: default;
-  /* Clear the Windows taskbar (~48px) so the input stays clickable */
-  margin-bottom: 48px;
+  /* Smooth fade when idle power-down kicks in */
+  transition: opacity 0.6s ease;
+}
+
+/* When the system idles the chat folds away completely so the right column
+   doesn't clutter the sleeping scene; any activity brings it right back. */
+body.idle .chat-panel {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .chat-log {
@@ -955,7 +986,7 @@ body.world-line-shifting .glitch-overlay {
 
 .chat-entry.assistant .chat-body {
   background: rgba(12, 14, 24, 0.8);
-  border: 1px solid rgba(138, 159, 196, 0.25);
+  border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.25);
   border-radius: 8px 8px 8px 2px;
   padding: 6px 9px;
   color: var(--text-main);
@@ -995,9 +1026,9 @@ body.world-line-shifting .glitch-overlay {
   border: 1px solid rgba(255, 85, 170, 0.35);
 }
 .chat-source.src-llm {
-  color: #b388ff;
-  background: rgba(179, 136, 255, 0.12);
-  border: 1px solid rgba(179, 136, 255, 0.35);
+  color: #ff7aa2;
+  background: rgba(255, 122, 162, 0.12);
+  border: 1px solid rgba(255, 122, 162, 0.35);
 }
 .chat-source.src-canned {
   color: #ffb14d;
@@ -1067,22 +1098,22 @@ body.world-line-shifting .glitch-overlay {
 }
 
 .chat-uplink.thinking {
-  color: #b388ff !important;
-  text-shadow: 0 0 8px rgba(179, 136, 255, 0.6) !important;
+  color: #ff7aa2 !important;
+  text-shadow: 0 0 8px rgba(255, 122, 162, 0.6) !important;
 }
 
-/* --- SETTINGS PANEL (bottom-right) --- */
+/* --- SETTINGS PANEL (bottom-right, floats over content so it can never push
+   the chat terminal off-screen when expanded) --- */
 .settings-panel {
-  grid-column: 2;
-  grid-row: 3;
-  justify-self: end;
-  align-self: end;
+  position: absolute;
+  right: 20px;
+  bottom: calc(20px + var(--taskbar-clear, 0px));
   width: 300px;
+  max-width: 92vw;
   cursor: default;
-  max-height: 78vh;
+  max-height: 60vh;
   overflow: hidden auto;
-  /* Clear the Windows taskbar like the chat panel */
-  margin-bottom: 48px;
+  z-index: 50;
 }
 
 .settings-header {
@@ -1104,7 +1135,7 @@ body.world-line-shifting .glitch-overlay {
   font-weight: 700;
   letter-spacing: 2px;
   color: var(--text-muted);
-  border-bottom: 1px dashed rgba(138, 159, 196, 0.2);
+  border-bottom: 1px dashed rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.2);
   padding-bottom: 4px;
   margin-bottom: 6px;
 }
@@ -1147,6 +1178,9 @@ body.hide-news .bottom-left-panel,
 body.hide-clock .top-left-panel,
 body.hide-chat .chat-panel,
 body.hide-ring #audio-canvas,
+body.hide-bg #bg-canvas,
+body.hide-bg .grid-overlay,
+body.hide-bg #bg-album,
 body.hide-crt .crt-overlay,
 body.hide-crt .crt-curve,
 body.hide-crt .vignette-overlay,
@@ -1188,6 +1222,27 @@ body.idle .pulse-circle,
 body.idle .pulse-text,
 body.idle .status-indicator.online::before {
   animation-play-state: paused;
+}
+
+/* USER AWAY: focus lost / Lively paused / lock — the chrome dims like a
+   monitor left alone, so when the user returns Kurisu's "peek" greeting reads
+   as the HUD lighting back up. Lighter than full idle power-down: the stage
+   keeps breathing. */
+body.user-away #hud-container {
+  opacity: 0.4;
+}
+
+body.user-away .hud-panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+body.user-away .crt-overlay {
+  opacity: 0.2;
+}
+
+body.user-away .grid-overlay {
+  opacity: 0.2;
 }
 
 /* Respect OS reduced-motion preference */

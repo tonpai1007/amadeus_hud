@@ -3,7 +3,7 @@
 	"FileReferences": {
 		"Moc": "Kurisu.moc3",
 		"Textures": [
-			"Kurisu.4096/texture_00.png"
+			"Kurisu.2048/texture_00.png"
 		],
 		"Physics": "Kurisu.physics3.json",
 		"DisplayInfo": "Kurisu.cdi3.json",

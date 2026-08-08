@@ -17,6 +17,13 @@
   <script src="live2d_controller.js"></script>
 </head>
 <body>
+  <!-- Now-playing album art backdrop: current track thumbnail, blurred +
+       dimmed into the scene (hidden when no music or Ambient BG off) -->
+  <div id="bg-album"></div>
+
+  <!-- Ambient background layer: drifting data particles + audio edge lines -->
+  <canvas id="bg-canvas"></canvas>
+
   <!-- HTML Canvas for 2D Audio Visualizer Ring (with cursor gravitational lensing) -->
   <canvas id="audio-canvas"></canvas>
 
@@ -40,8 +47,8 @@
   <div class="crt-curve"></div>
   <div class="vignette-overlay"></div>
   <div class="bloom-overlay"></div>
-  <!-- World Line Shift FX Overlay -->
-  <div class="glitch-overlay" id="glitch-overlay"></div>
+  <!-- Beat pulse: quick red bloom that flashes on the music's kick -->
+  <div id="beat-glow"></div>
 
   <!-- HUD Interface Wrapper -->
   <div id="hud-container">
@@ -99,7 +106,7 @@
     </section>
 
     <!-- BOTTOM LEFT: Live News Feed -->
-    <section class="hud-panel bottom-left-panel" style="width: 500px; height: 260px; display: flex; flex-direction: column;">
+    <section class="hud-panel bottom-left-panel">
       <div class="panel-header">
         <span class="panel-tag">// REALTIME_NEWS_FEED</span>
         <span class="pulse-text" id="news-status">LIVE_SYNC</span>
@@ -121,7 +128,7 @@
       <div class="chat-input-row">
         <input class="chat-input" id="kurisu-input" type="text"
                placeholder="> transmit to Kurisu... [Enter]" autocomplete="off" spellcheck="false">
-        <button class="chat-send" id="chat-send" type="button">TX</button>
+        <button class="chat-send" id="chat-send" type="button">SEND</button>
       </div>
     </section>
 
@@ -140,14 +147,16 @@
           <label class="setting-row"><span>Audio Ring</span><input type="checkbox" data-widget="ring" checked></label>
           <label class="setting-row"><span>Chat Terminal</span><input type="checkbox" data-widget="chat" checked></label>
           <label class="setting-row"><span>CRT / Vignette</span><input type="checkbox" data-widget="crt" checked></label>
+          <label class="setting-row"><span>Ambient BG</span><input type="checkbox" data-widget="bg" checked></label>
           <label class="setting-row"><span>PET_MODE</span><input type="checkbox" id="setting-pet" checked></label>
+          <label class="setting-row"><span>Voice Replies</span><input type="checkbox" id="setting-voice" checked></label>
         </div>
         <div class="settings-group">
           <div class="settings-title">OSCILLOSCOPE</div>
           <label class="setting-row"><span>Speed</span><input type="range" id="scope-speed" min="1" max="10" step="1" value="5"></label>
           <label class="setting-row"><span>Density</span><input type="range" id="scope-density" min="1" max="10" step="1" value="5"></label>
           <label class="setting-row"><span>Sound Color</span><input type="color" id="scope-ch1" value="#ff4d55"></label>
-          <label class="setting-row"><span>Brain Color</span><input type="color" id="scope-ch2" value="#b388ff"></label>
+          <label class="setting-row"><span>Brain Color</span><input type="color" id="scope-ch2" value="#ff55aa"></label>
         </div>
       </div>
     </section>

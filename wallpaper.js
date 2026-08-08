@@ -45,17 +45,52 @@ let isIdle = false;
 let isSleeping = false;
 let isLivelyPaused = false; // set by --pause-event
 
+// "Peek" reactions: when the user switches away (window focus loss, Lively
+// pause, lock/screensaver) Kurisu notices, and when they come back she peeks
+// up toward where they'd be and greets them. Micro-absences (quick tab flips,
+// focus flicker) are ignored so she doesn't react to every stray click.
+let isUserAway = false;
+let userAwaySince = 0;          // when the current absence started
+let lastPeekAt = 0;             // throttle for return reactions
+let peekReadyAt = performance.now() + 3000; // startup grace: don't dim/pause before first usable frame
+
 // Cursor position (normalized 0..1) for the audio-ring gravitational distortion
 let cursorNX = 0.5;
 let cursorNY = 0.5;
 let cursorSeen = false;
 
+// --- TASKBAR CLEARANCE ---
+// The Lively wallpaper window spans the full monitor, so its bottom strip is
+// hidden behind the Windows taskbar. `screen.availHeight` (the work area)
+// differs from `window.innerHeight` by exactly the taskbar height, which we
+// expose as --taskbar-clear so bottom-anchored panels clear it at any DPI.
+// If the window already excludes the taskbar the difference is 0 and the CSS
+// fallback baseline is used instead.
+function applyTaskbarClearance() {
+  let clear = 0;
+  try {
+    clear = window.innerHeight - window.screen.availHeight;
+  } catch (e) { clear = 0; }
+  if (!isFinite(clear) || clear < 0) clear = 0;
+  clear = Math.round(Math.min(clear, 120)); // sanity cap: no taskbar is that tall
+  document.documentElement.style.setProperty('--taskbar-clear', clear + 'px');
+}
+
+window.addEventListener('resize', applyTaskbarClearance);
+
 // --- INITIALIZATION ---
 window.addEventListener('DOMContentLoaded', () => {
+  applyTaskbarClearance();
+  // Re-measure after Lively has fully sized the window (availHeight can lag
+  // the very first paint).
+  setTimeout(applyTaskbarClearance, 500);
   initClock();
   initAudioCanvas();
   initLive2D().then(kurisuGreetOnLoad);
+  initTTS();
   initWorldLine();
+  initBackground();
+  startVisualLoop();
   fetchRealtimeNews();
   startIdleWatchdog();
   scheduleIdleChatter();
@@ -65,6 +100,8 @@ window.addEventListener('DOMContentLoaded', () => {
   loadChatLog();
   renderChatLog();
   checkBrainUplink();
+  setInterval(checkBrainUplink, 60000); // keep re-probing so the uplink
+                                        // recovers after the brain reboots
   updateEmotionTint();
   setInterval(updateEmotionTint, 150);
   initSettings();
@@ -81,16 +118,39 @@ window.addEventListener('DOMContentLoaded', () => {
     markActivity();
   }, { passive: true });
 
-  // Click anywhere = shift the world line (Kurisu startle + HUD glitch)
+  // Click anywhere: one-time hint that Kurisu can be talked to. (The old
+  // click-to-shake "world line shift" was removed.)
   window.addEventListener('pointerdown', () => {
     if (isLivelyPaused) return;
-    triggerWorldLineShift();
-    // One-time hint that Kurisu can be talked to
     if (!kurisuHintShown) {
       kurisuHintShown = true;
       setTimeout(() => showKurisuBubble('[ type a message - press Enter to talk to me ]', 5000), 700);
     }
   }, { passive: true });
+
+  // Peek: react when the user switches away (tab/window blur, screensaver,
+  // lock) and perk up when they come back. In Lively the same signals arrive
+  // via --pause-event (livelyWallpaperPlaybackChanged).
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) onUserAway();
+    else onUserReturn();
+  });
+  window.addEventListener('blur', onUserAway);
+  window.addEventListener('focus', onUserReturn);
+
+  // Shadow taps: touching her feet/shadow is its own reaction — a startled hop
+  // (with an occasional line) instead of a full world-line shift.
+  const shadowEl = document.getElementById('l2d-shadow');
+  if (shadowEl) {
+    shadowEl.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (isLivelyPaused) return;
+      markActivity();
+      if (live2DController && live2DController.interactShadow) {
+        live2DController.interactShadow();
+      }
+    }, { passive: true });
+  }
   
   // Start simulation loop (will run if Lively events aren't received)
   setTimeout(() => {
@@ -176,8 +236,9 @@ function initPetMode() {
 const SETTINGS_KEY = 'amadeus.settings';
 const SETTINGS_DEFAULTS = {
   widgets: { scope: true, news: true, clock: true, ring: true, crt: true },
-   scope: { speed: 5, density: 5, ch1: '#ff4d55', ch2: '#b388ff' },
+   scope: { speed: 5, density: 5, ch1: '#ff4d55', ch2: '#ff55aa' },
   pet: false,
+  voice: true, // Kurisu speaks her lines aloud (TTS)
 };
 let SETTINGS = null;
 
@@ -189,8 +250,15 @@ function loadSettings() {
       base.widgets = Object.assign(base.widgets, saved.widgets || {});
       base.scope = Object.assign(base.scope, saved.scope || {});
       if (typeof saved.pet === 'boolean') base.pet = saved.pet;
+      if (typeof saved.voice === 'boolean') base.voice = saved.voice;
     }
   } catch (e) { /* corrupt save â€” keep defaults */ }
+
+  // Migrate old blue/green scope colors saved before the red-theme update so
+  // persisted settings can't keep the waveform (CH1) and brain trace (CH2)
+  // stuck in the old palette.
+  if (/^(#)?39ff7a$/i.test(base.scope.ch1 || '')) base.scope.ch1 = '#ff4d55';
+  if (/^(#)?b388ff$/i.test(base.scope.ch2 || '')) base.scope.ch2 = '#ff55aa';
   return base;
 }
 
@@ -241,6 +309,21 @@ function initSettings() {
     petCheck.checked = SETTINGS.pet || localStorage.getItem(PET_MODE_KEY) === '1';
     petCheck.addEventListener('change', () => {
       if (petApply) petApply(petCheck.checked);
+    });
+  }
+
+  // Voice Replies (TTS)
+  const voiceCheck = document.getElementById('setting-voice');
+  if (voiceCheck) {
+    voiceCheck.checked = SETTINGS.voice !== false;
+    ttsEnabled = voiceCheck.checked;
+    voiceCheck.addEventListener('change', () => {
+      ttsEnabled = voiceCheck.checked;
+      SETTINGS.voice = voiceCheck.checked;
+      saveSettings();
+      if (!ttsEnabled && 'speechSynthesis' in window) {
+        try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+      }
     });
   }
 
@@ -516,23 +599,23 @@ const EMOTION_TINT = {
   content:    { r: 255, g: 170, b: 180, glow: 0.35 },
   amused:     { r: 255, g: 175, b: 200, glow: 0.45 },
   smug:       { r: 255, g: 200, b: 120, glow: 0.42 },
-  proud:      { r: 200, g: 160, b: 255, glow: 0.43 },
+  proud:      { r: 255, g: 130, b: 110, glow: 0.43 },
   jealous:    { r: 255, g:  60, b: 160, glow: 0.58 },
   happy:      { r: 255, g: 120, b: 170, glow: 0.45 },
   excited:    { r: 255, g:  95, b: 150, glow: 0.55 },
   surprised:  { r: 255, g: 180, b: 200, glow: 0.50 },
-  curious:    { r: 210, g: 125, b: 200, glow: 0.40 },
-  focused:    { r: 200, g: 100, b: 255, glow: 0.35 },
-  confused:   { r: 220, g: 180, b: 240, glow: 0.40 },
-  thinking:   { r: 180, g: 175, b: 255, glow: 0.35 },
+  curious:    { r: 235, g: 120, b: 140, glow: 0.40 },
+  focused:    { r: 230, g:  90, b: 110, glow: 0.35 },
+  confused:   { r: 240, g: 150, b: 170, glow: 0.40 },
+  thinking:   { r: 230, g:  80, b: 100, glow: 0.35 },
   angry:      { r: 255, g:  65, b:  70, glow: 0.60 },
   annoyed:    { r: 255, g: 130, b:  75, glow: 0.45 },
   frustrated: { r: 255, g: 100, b:  65, glow: 0.50 },
-  sad:        { r: 120, g: 130, b: 220, glow: 0.25 },
-  bitter:     { r: 100, g: 120, b: 210, glow: 0.25 },
-  tired:      { r: 180, g: 120, b: 210, glow: 0.28 },
-  sleepy:     { r: 150, g: 100, b: 190, glow: 0.25 },
-  sleeping:   { r: 120, g:  80, b: 175, glow: 0.22 },
+  sad:        { r: 160, g:  70, b: 110, glow: 0.25 },
+  bitter:     { r: 140, g:  60, b:  90, glow: 0.25 },
+  tired:      { r: 170, g: 100, b: 120, glow: 0.28 },
+  sleepy:     { r: 150, g:  85, b: 110, glow: 0.25 },
+  sleeping:   { r: 120, g:  60, b:  90, glow: 0.22 },
 };
 let hudTint = { r: EMOTION_TINT.neutral.r, g: EMOTION_TINT.neutral.g, b: EMOTION_TINT.neutral.b, glow: EMOTION_TINT.neutral.glow };
 
@@ -655,6 +738,36 @@ const KURISU_WAKE_LINES = [
   "You returned. Good. The lab memos are all in order.",
 ];
 
+// She says one of these when you switch back to the desktop after being away
+// (window blur / Lively pause / lock) — her "peek" greeting.
+const KURISU_RETURN_LINES = [
+  "Ah — you're back. I was just checking the world line... and you weren't on it.",
+  "Peeking for a reason, or just missing the view?",
+  "You left without saying anything. I was keeping an eye on the lab.",
+  "Back already? The divergence meter didn't even drift. Statistically boring.",
+  "I noticed you were gone. Don't test my observational skills.",
+  "Careful — the desk monitor you turned away from has been watching you leave.",
+];
+
+// Occasional voiced reactions to touch interactions (hold-to-pet, shadow
+// taps, double-clicks) — shown via live2DController.onInteract.
+const KURISU_PET_LINES = [
+  "H-hey! I'm not a pet, you know.",
+  "What do you think you're doing...? ...That's. Enough.",
+  "If you're going to be this affectionate, at least say something.",
+  "Careful, you'll wrinkle the lab coat.",
+  "...I'll allow exactly one more.",
+  "Hmph. I'm taking this up with the lab memos.",
+];
+
+const KURISU_POKE_LINES = [
+  "Hey! Poking me won't make the experiment go faster.",
+  "My cheeks are not a physics problem.",
+  "Ow. Was that... necessary?",
+  "I'm filing a complaint with the university.",
+  "Keep poking and I'll write you into a world line with no coffee.",
+];
+
 let kurisuBubbleEl = null;
 let kurisuBubbleTextEl = null;
 let kurisuBubbleCaretEl = null;
@@ -665,6 +778,80 @@ let kurisuInput = '';
 let kurisuGreeted = false;
 let kurisuHintShown = false;
 let kurisuReplying = false; // one chat request in flight at a time
+
+// --- VOICE (TTS) ---
+// Kurisu speaks her lines aloud via the browser's built-in speechSynthesis.
+// No permissions needed; the "Voice Replies" setting in SYSTEM_OPTS toggles it.
+// Chrome only starts producing audio after the first user gesture, so we nudge
+// speechSynthesis.resume() on the first pointerdown.
+let ttsEnabled = true;
+let ttsVoice = null;
+let ttsInitialized = false;
+
+function initTTS() {
+  if (ttsInitialized || !('speechSynthesis' in window)) return;
+  ttsInitialized = true;
+
+  const pickVoice = () => {
+    try {
+      const voices = window.speechSynthesis.getVoices();
+      if (!voices || !voices.length) return null;
+      const en = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith('en'));
+      const pool = en.length ? en : voices;
+      return pool.find((v) => /female|samantha|zira|hazel|victoria|karen|moira|sonia|libby|serena|katya/i.test(v.name)) ||
+             pool.find((v) => /google|microsoft|natural|online/i.test(v.name)) ||
+             pool[0];
+    } catch (e) { return null; }
+  };
+  ttsVoice = pickVoice();
+  if (window.speechSynthesis.onvoiceschanged !== undefined) {
+    // getVoices() can populate asynchronously — re-pick when it does.
+    window.speechSynthesis.onvoiceschanged = () => { ttsVoice = pickVoice(); };
+  }
+
+  // Chrome quirk: speech is gated behind the first user gesture.
+  const kick = () => {
+    try { window.speechSynthesis.resume(); } catch (e) { /* ignore */ }
+  };
+  window.addEventListener('pointerdown', kick, { passive: true, once: true });
+}
+
+// Generation token: each speak() bumps it so a cancel() from a newer line can
+// never let an older line's chunk chain continue speaking.
+let ttsGeneration = 0;
+
+function speak(text) {
+  if (!ttsEnabled || !('speechSynthesis' in window)) return;
+  // Don't talk to an empty room (browser tab hidden; Lively uses --pause-event).
+  if (document.hidden) return;
+  const t = String(text || '').trim();
+  // Skip UI hints ("[ ... ]") and the "…" thinking placeholder.
+  if (!t || t[0] === '[' || t[0] === '…' || t.startsWith('...')) return;
+  try {
+    const gen = ++ttsGeneration;
+    window.speechSynthesis.cancel(); // never stack two of her lines
+
+    // Split into sentence-sized chunks: Chrome drops a single utterance after
+    // ~15s, so long replies are queued piece-by-piece (and resumed after the
+    // Chrome auto-pause bug).
+    const chunks = t.match(/[^.!?…]+[.!?…]*\s*/g) || [t];
+    const speakNext = (i) => {
+      if (gen !== ttsGeneration) return; // superseded by a newer line
+      if (i >= chunks.length) return;
+      const u = new SpeechSynthesisUtterance(chunks[i].trim());
+      if (ttsVoice) u.voice = ttsVoice;
+      u.rate = 1.05;
+      u.pitch = 1.12;
+      u.volume = 0.9;
+      u.onend = () => {
+        try { window.speechSynthesis.resume(); } catch (e) { /* ignore */ }
+        speakNext(i + 1);
+      };
+      window.speechSynthesis.speak(u);
+    };
+    speakNext(0);
+  } catch (e) { /* TTS is optional — never break the wallpaper for it */ }
+}
 
 function initKurisuBubble() {
   kurisuBubbleEl = document.getElementById('kurisu-bubble');
@@ -718,6 +905,9 @@ function showKurisuBubble(text, durationMs) {
   // long as the typewriter takes, plus a short grace period.
   const typeMs = text.length * 18;
   kurisuBubbleTimer = setTimeout(hideKurisuBubble, Math.max(durationMs || 8000, typeMs + 2500));
+
+  // Speak the line aloud (skips UI hints / thinking placeholders internally).
+  speak(text);
 }
 
 // "â€¦" placeholder bubble while Kurisu is generating a reply
@@ -1028,7 +1218,7 @@ function scheduleIdleChatter() {
 function initKurisuChatInput() {
   const chatPanel = document.getElementById('chat-panel');
   const sendBtn = document.getElementById('chat-send');
-  // Clicking inside the chat panel must not trigger the world-line glitch
+  // Clicking inside the chat panel stays isolated from global pointer handlers
   if (chatPanel) chatPanel.addEventListener('pointerdown', (e) => e.stopPropagation());
   // Keep the live buffer in sync with whatever is in the visible box
   if (kurisuInputEl) {
@@ -1162,18 +1352,43 @@ function enterIdleState(idle) {
   }
 }
 
-// --- CLICK: WORLD LINE SHIFT ---
-// Any click briefly destabilizes the world line: Kurisu startles and the HUD
-// jitters through a chromatic glitch before snapping back.
-function triggerWorldLineShift() {
-  if (live2DController && live2DController.triggerSurprise) {
-    live2DController.triggerSurprise();
+// --- PEEK: USER AWAY / RETURN ---
+// The wallpaper's idle watchdog only watches mouse/audio activity. These hooks
+// also react to the OS telling us the user actually left (window focus loss,
+// Lively pausing the wallpaper, lock/screensaver) so Kurisu can notice a real
+// absence — and greet you when the desktop comes back.
+
+function onUserAway() {
+  if (isUserAway) return;
+  // Startup grace: ignore blur that fires before the wallpaper is usable.
+  if (performance.now() < peekReadyAt) return;
+  isUserAway = true;
+  userAwaySince = performance.now();
+  document.body.classList.add('user-away');
+  if (live2DController && live2DController.onUserAway) {
+    live2DController.onUserAway();
   }
-  document.body.classList.add('world-line-shifting');
-  clearTimeout(triggerWorldLineShift._timer);
-  triggerWorldLineShift._timer = setTimeout(() => {
-    document.body.classList.remove('world-line-shifting');
-  }, 450);
+}
+
+function onUserReturn() {
+  const wasAway = isUserAway;
+  isUserAway = false;
+  document.body.classList.remove('user-away');
+  if (!wasAway) return;
+  // Ignore micro-absences (quick tab flips, focus flicker, stray clicks).
+  if (performance.now() - userAwaySince < 800) return;
+  const wasSleeping = isSleeping;
+  markActivity();
+  if (wasSleeping) return; // the wake flow already greets her
+  const now = performance.now();
+  if (now - lastPeekAt < 6000) return; // don't spam the return greeting
+  lastPeekAt = now;
+  if (live2DController && live2DController.triggerPeek) {
+    live2DController.triggerPeek();
+  }
+  const line = KURISU_RETURN_LINES[Math.floor(Math.random() * KURISU_RETURN_LINES.length)];
+  showKurisuBubble(line, 6000);
+  appendChatEntry('assistant', line, 'history');
 }
 
 // --- TIME-OF-DAY AMBIENCE ---
@@ -1199,11 +1414,14 @@ function applyTimeOfDay() {
 let wlCanvas, wlCtx;
 let worldLineEnergy = 0;        // bass energy (fed by handleAudioFrame)
 let lastAudioLevel = 0;         // overall audio energy (fed by handleAudioFrame)
+let lastBassLevel = 0;          // previous bass sample, for beat detection
+let lastBeatAt = 0;             // timestamp of last beat pulse (throttle)
+let beatGlowEl = null;          // cached #beat-glow overlay element
 let mindEnergy = 0.3;           // smoothed thought/feeling trace
-let lastSpectrum = new Array(32).fill(0); // most recent FFT bins for the waveform
-let smoothSpec = new Array(32).fill(0);   // time-smoothed bins so the trace morphs, not jumps
-let peakSpec = new Array(32).fill(0);     // peak-hold with fall-off for analyzer feel
-let peakFalloff = 0.82;                   // decay rate per frame for peak hold
+let lastSpectrum = new Array(48).fill(0); // most recent FFT bins for the waveform
+let smoothSpec = new Array(48).fill(0);   // time-smoothed bins so the trace morphs, not jumps
+let peakSpec = new Array(48).fill(0);     // peak-hold with fall-off for analyzer feel
+let peakFalloff = 0.86;                   // decay rate per frame for peak hold
 let audioEnv = 0;               // smoothed audio drive envelope
 let wlPhase2 = Math.random() * Math.PI * 2;  // mental carrier phase (CH2)
 let mindBaseline = 0;                         // slow vertical drift for scope DC offset
@@ -1215,6 +1433,109 @@ const EMOTION_INTENSITY = {
   content: 0.38, sad: 0.50, annoyed: 0.62, happy: 0.66, curious: 0.70,
   thinking: 0.76, angry: 0.80, excited: 0.86, surprised: 0.92,
 };
+
+// --- AMBIENT BACKGROUND (data particles + audio edge strips) ---
+// Fills the dead zones around the panels without heavy assets: a field of
+// drifting red flecks (the anime's floating data dust) that speed up with the
+// music, plus thin waveform strips along the top/bottom edges that ride the
+// same FFT bins as the scope. Runs on its own 30fps timer.
+let bgCanvas, bgCtx;
+let bgParticles = [];
+let bgW = 0, bgH = 0;
+const BG_PARTICLE_COUNT = 150;
+let bgBeatPulse = 0; // decaying kick strength shared from triggerBeatPulse()
+
+function initBackground() {
+  bgCanvas = document.getElementById('bg-canvas');
+  if (!bgCanvas) return;
+  bgCtx = bgCanvas.getContext('2d');
+
+  function resize() {
+    bgW = window.innerWidth;
+    bgH = window.innerHeight;
+    bgCanvas.width = Math.max(1, Math.round(bgW * PERF.dpr));
+    bgCanvas.height = Math.max(1, Math.round(bgH * PERF.dpr));
+    bgParticles = [];
+    for (let i = 0; i < BG_PARTICLE_COUNT; i++) {
+      bgParticles.push({
+        x: Math.random() * bgW,
+        y: Math.random() * bgH,
+        vx: (Math.random() - 0.5) * 0.45,
+        vy: (Math.random() - 0.5) * 0.45,
+        r: Math.random() * 1.6 + 0.5,
+        p: Math.random() * Math.PI * 2,   // twinkle phase
+        tw: 0.02 + Math.random() * 0.05,  // twinkle rate
+      });
+    }
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+}
+
+function updateBackground() {
+  if (!bgCtx || bgW === 0) return;
+  // Skip entirely when the Ambient BG widget is switched off in settings
+  if (document.body.classList.contains('hide-bg')) return;
+  // Freeze the ambient layer while idle so power-saving mode stays cheap
+  if (isIdle) return;
+  const t = performance.now() / 1000;
+  const en = Math.max(0, Math.min(1, lastAudioLevel));
+  // Decaying kick strength (set to 1 on each detected bass beat) so the dust
+  // scatters, brightens and shudders exactly when the audio ring pulses.
+  const beat = bgBeatPulse;
+  bgBeatPulse = Math.max(0, bgBeatPulse - 0.09);
+
+  bgCtx.setTransform(PERF.dpr, 0, 0, PERF.dpr, 0, 0);
+  bgCtx.clearRect(0, 0, bgW, bgH);
+
+  // 1. Drifting data particles - pace rises with the music and surges on each beat
+  const pace = 1 + en * 2.5 + beat * 5;
+  bgCtx.fillStyle = 'rgba(255, 90, 110, 0.6)';
+  for (const p of bgParticles) {
+    p.x += p.vx * pace;
+    p.y += p.vy * pace;
+    if (p.x < -4) p.x = bgW + 4; else if (p.x > bgW + 4) p.x = -4;
+    if (p.y < -4) p.y = bgH + 4; else if (p.y > bgH + 4) p.y = -4;
+    const a = 0.25 + 0.5 * (0.5 + 0.5 * Math.sin(t * p.tw * 60 + p.p));
+    bgCtx.globalAlpha = Math.min(1, a + beat * 0.55);
+    const size = p.r * (1 + beat * 1.5); // flecks flare outward on the kick
+    bgCtx.fillRect(p.x, p.y, size, size);
+  }
+  bgCtx.globalAlpha = 1;
+
+  // 1b. Beat shockwave: a faint ring expanding from center, same pulse the
+  // audio ring rides — ties the ambient layer to the same kick as the scope.
+  if (beat > 0.02) {
+    const rp = 1 - beat; // 0 → 1 as the pulse decays
+    bgCtx.strokeStyle = `rgba(255, 90, 120, ${(0.45 * beat).toFixed(3)})`;
+    bgCtx.lineWidth = 1.5;
+    bgCtx.beginPath();
+    bgCtx.arc(bgW / 2, bgH / 2, 60 + rp * Math.max(bgW, bgH) * 0.45, 0, Math.PI * 2);
+    bgCtx.stroke();
+  }
+
+  // 2. Audio-reactive edge strips along the top and bottom
+  drawEdgeStrip(8, 1, en);
+  drawEdgeStrip(bgH - 14, -1, en);
+}
+
+function drawEdgeStrip(y, dir, en) {
+  const N = 64;
+  const seg = bgW / N;
+  bgCtx.strokeStyle = 'rgba(255, 77, 85, 0.30)';
+  bgCtx.lineWidth = 1;
+  bgCtx.beginPath();
+  for (let i = 0; i <= N; i++) {
+    const v = i < lastSpectrum.length ? (lastSpectrum[i] || 0) : 0;
+    const amp = 2 + v * 24 * (0.35 + en * 1.2);
+    const x = i * seg;
+    const yv = y + dir * (amp + Math.sin(performance.now() / 320 + i * 0.45) * 1.5);
+    if (i === 0) bgCtx.moveTo(x, yv);
+    else bgCtx.lineTo(x, yv);
+  }
+  bgCtx.stroke();
+}
 
 function initWorldLine() {
   wlCanvas = document.getElementById('world-line-canvas');
@@ -1230,9 +1551,32 @@ function initWorldLine() {
   wlResize = resize;
   window.addEventListener('resize', resize);
   resize();
-
-  setInterval(updateWorldLine, 1000 / 15);
+  // World-line meta (SIG/MIND readouts) updates on a slow timer independent
+  // of the frame-throttled canvas draws.
   setInterval(updateWorldLineMeta, 500);
+}
+
+// --- SINGLE VISUAL LOOP ---
+// Scope, background and any future canvas layers share one requestAnimationFrame
+// loop throttled by the perf governor's current visualFps. One timer wakes the
+// engine once per frame instead of several overlapping 30fps intervals, and it
+// automatically follows perf-level changes (drops to 20fps under load, back to
+// 40fps when there's headroom).
+let lastVisualTick = 0;
+
+function startVisualLoop() {
+  lastVisualTick = 0;
+  requestAnimationFrame(visualLoopTick);
+}
+
+function visualLoopTick(now) {
+  requestAnimationFrame(visualLoopTick);
+  const interval = 1000 / PERF.visualFps;
+  if (now - lastVisualTick < interval) return;
+  // Phase-lock so the throttled frames stay evenly spaced (no drift)
+  lastVisualTick = now - ((now - lastVisualTick) % interval);
+  updateWorldLine();
+  updateBackground();
 }
 
 function drawScopeGraticule(w, h) {
@@ -1270,15 +1614,16 @@ function updateWorldLine() {
   const w = wlCanvas.width;
   const h = wlCanvas.height;
 
-  // Phosphor persistence: fade the previous frame instead of clearing. A touch
-  // more fade than before keeps fast-moving traces from smearing into a blob.
-  wlCtx.fillStyle = 'rgba(2, 4, 10, 0.26)';
+  // Phosphor persistence: fade the previous frame instead of clearing. A
+  // stronger fade than before keeps fast spectrum bars from ghosting into a
+  // smear while still leaving a soft CRT trail for the EEG trace.
+  wlCtx.fillStyle = 'rgba(2, 4, 10, 0.38)';
   wlCtx.fillRect(0, 0, w, h);
   drawScopeGraticule(w, h);
 
   // CH1 - audio: the live spectrum as vertical peaks (frequency display).
   const audio = Math.max(0, Math.min(1, lastAudioLevel));
-  audioEnv += (audio - audioEnv) * 0.28;
+  audioEnv += (audio - audioEnv) * 0.5;
 
   // CH2 - mind: her emotional state, kicked up while she thinks/types/speaks.
   const emotion = (live2DController && live2DController.currentEmotion) || 'neutral';
@@ -1300,13 +1645,15 @@ function updateWorldLine() {
   const spec = lastSpectrum;
 
   // Time-smooth each bin so the spectral peaks transition smoothly with the
-  // music instead of jumping shape every frame (the #1 source of "wonky").
+  // music. 0.55/frame at 30fps tracks transients within ~3 frames (~100ms)
+  // instead of trailing the beat by half a second.
   for (let i = 0; i < smoothSpec.length; i++) {
-    smoothSpec[i] += ((spec[i] || 0) - smoothSpec[i]) * 0.35;
+    smoothSpec[i] += ((spec[i] || 0) - smoothSpec[i]) * 0.55;
   }
 
-  // Peak-hold with fall-off: tracks a decaying peak per bin so fast attacks
-  // spike instantly, and releases decay smoothly like a real spectrum analyzer.
+  // Peak-hold with fall-off: fast attack, controlled release like a real
+  // spectrum analyzer. Decay is gentle so peaks linger just long enough to
+  // read as held maxima without smearing.
   for (let i = 0; i < peakSpec.length; i++) {
     if (smoothSpec[i] > peakSpec[i]) {
       peakSpec[i] = smoothSpec[i];
@@ -1318,43 +1665,58 @@ function updateWorldLine() {
   // Tunable scope params from the settings panel (colors, speed, density).
   const sc = (SETTINGS && SETTINGS.scope) ? SETTINGS.scope : SETTINGS_DEFAULTS.scope;
   const c1 = hexToRgb(sc.ch1) || { r: 57, g: 255, b: 122 };
-  const c2 = hexToRgb(sc.ch2) || { r: 179, g: 136, b: 255 };
+   const c2 = hexToRgb(sc.ch2) || { r: 255, g: 85, b: 170 };
   const step = PERF_LEVELS[perfLevel].scopeStep;
 
   // CH1 - SOUND SPECTRUM (lower band): a real-time frequency display like a
-   // spectrum analyzer / oscilloscope in "spectrum" mode. We draw the actual
-   // FFT bins as vertical peaks across the scope width so you see exactly what
-   // frequencies are present - bass on the left, treble on the right. No fake
-   // sine-wave reconstruction, no wonky morphing; just the raw spectral energy.
+   // spectrum analyzer / oscilloscope in "spectrum" mode. Each FFT bin is a
+   // filled vertical bar from the baseline up, bass on the left, treble on the
+   // right. Peak-hold caps mark the highest recent excursion per bin.
    const N = peakSpec.length;
    // Loudness = overall energy for amplitude scaling of the peaks
    let sigSum = 0;
    for (let i = 0; i < N; i++) sigSum += peakSpec[i];
-   const drive = audioEnv * (0.3 + 0.7 * Math.min(1, sigSum / 4));
-   const peakAmp = h * 0.28 * (0.10 + 0.90 * drive);
+   const drive = Math.min(1, 0.15 + audioEnv * (0.3 + 0.7 * Math.min(1, sigSum / 4)));
+   const peakAmp = h * 0.30 * drive;
+   const barW = Math.max(2, Math.floor(w / N) - 1);
+   const baseY = h * 0.70;
 
-   // Draw the spectrum as filled vertical lines for each frequency bin
-   wlCtx.lineCap = 'butt';
-   // Soft glow pass - wider lines with low opacity for CRT phosphor bloom
+   // Baseline tick line for the spectrum band
+   wlCtx.fillStyle = `rgba(${c1.r}, ${c1.g}, ${c1.b}, 0.18)`;
+   wlCtx.fillRect(0, baseY, w, 1);
+
+   // Two-pass draw, no shadowBlur (cheap + crisp): a wide faint pass for glow,
+   // then the bright bar body, then a bright peak cap.
    wlCtx.beginPath();
    for (let i = 0; i < N; i++) {
      const a = peakSpec[i];
-     if (a < 0.002) continue;
-     const x = (i / (N - 1)) * w;
+     if (a < 0.004) continue;
+     const x = (i / N) * w;
      const barH = a * peakAmp;
-     wlCtx.moveTo(x, h * 0.68);
-     wlCtx.lineTo(x, h * 0.68 - barH);
+     // glow pass (wide, faint)
+     wlCtx.fillStyle = `rgba(${c1.r}, ${c1.g}, ${c1.b}, 0.10)`;
+     wlCtx.fillRect(x, baseY - barH - 2, barW + 4, barH + 3);
    }
-   wlCtx.strokeStyle = `rgba(${c1.r}, ${c1.g}, ${c1.b}, 0.25)`;
-   wlCtx.lineWidth = 6;
-   wlCtx.shadowBlur = 4;
-   wlCtx.shadowColor = `rgba(${c1.r}, ${c1.g}, ${c1.b}, 0.35)`;
-   wlCtx.stroke();
-   // Sharp foreground trace on top
-   wlCtx.strokeStyle = `rgba(${c1.r}, ${c1.g}, ${c1.b}, 0.95)`;
-   wlCtx.lineWidth = 1.5;
-   wlCtx.shadowBlur = 0;
-   wlCtx.stroke();
+   wlCtx.beginPath();
+   for (let i = 0; i < N; i++) {
+     const a = peakSpec[i];
+     if (a < 0.004) continue;
+     const x = (i / N) * w;
+     const barH = a * peakAmp;
+     // bar body
+     wlCtx.fillStyle = `rgba(${c1.r}, ${c1.g}, ${c1.b}, ${Math.min(1, 0.35 + a * 1.3)})`;
+     wlCtx.fillRect(x, baseY - barH, barW, barH + 1);
+   }
+   // Peak caps: thin brighter sliver at each bar top for the analyzer "hold"
+   wlCtx.beginPath();
+   for (let i = 0; i < N; i++) {
+     const a = peakSpec[i];
+     if (a < 0.004) continue;
+     const x = (i / N) * w;
+     const barH = a * peakAmp;
+     wlCtx.fillStyle = `rgba(${c1.r}, ${c1.g}, ${c1.b}, 0.95)`;
+     wlCtx.fillRect(x - 1, baseY - barH - 1, barW + 2, 1.5);
+   }
 
    // CH2 - MIND/EEG (violet, upper band): her emotional/mental state as a
    // brainwave pattern. Base rhythms are modulated by emotion intensity and
@@ -1554,6 +1916,13 @@ async function initLive2D() {
   // Initialize the avatar
   // Path: live2d/kurisu/Kurisu.model3.json
   live2DController = new Live2DController('live2d-canvas', 'live2d/kurisu/Kurisu.model3.json');
+
+  // Touch reactions from the controller surface as small spoken bubbles.
+  live2DController.onInteract = (line) => {
+    if (!line || isIdle || isSleeping || !kurisuBubbleEl) return;
+    showKurisuBubble(line, 5000);
+    appendChatEntry('assistant', line, 'history');
+  };
   
   const success = await live2DController.init();
   if (success) {
@@ -2107,6 +2476,26 @@ setInterval(() => {
   if (!isLivelyPaused) fetchRealtimeNews();
 }, 15 * 60 * 1000);
 
+// --- BEAT PULSE ---
+// Flashes a soft red bloom across the whole screen on the music's kick.
+// Re-adding the class (after a forced reflow) restarts the CSS animation
+// cleanly every beat; the timestamp gate keeps it under ~5 flashes/sec.
+function triggerBeatPulse() {
+  const now = performance.now();
+  if (now - lastBeatAt < 200) return;
+  lastBeatAt = now;
+  // Same kick makes her body bob along (live2d_controller.triggerBeat)
+  if (live2DController && live2DController.triggerBeat) live2DController.triggerBeat();
+  if (!beatGlowEl) beatGlowEl = document.getElementById('beat-glow');
+  if (beatGlowEl) {
+    beatGlowEl.classList.remove('beat');
+    void beatGlowEl.offsetWidth;
+    beatGlowEl.classList.add('beat');
+  }
+  // Same kick drives the ambient dust field (scatter + shockwave ring).
+  bgBeatPulse = 1;
+}
+
 // --- LIVELY WALLPAPER API HOOKS ---
 
 // 1. System Audio Listener
@@ -2139,11 +2528,19 @@ function handleAudioFrame(audioArray) {
   }
   const bassVal = bassSum / 8;
 
+  // Beat detection: a sharp rise in bass energy reads as a kick. The ratio +
+  // absolute jump filters out steady/rolling bass, and the throttle in
+  // triggerBeatPulse() stops double-fires on a single hit.
+  if (bassVal > 0.14 && bassVal > lastBassLevel * 1.35 && bassVal - lastBassLevel > 0.05) {
+    triggerBeatPulse();
+  }
+  lastBassLevel = bassVal;
+
   // Feed the world line interference map (updates on its own 15fps clock)
   worldLineEnergy = bassVal;
   lastAudioLevel = energy;
   // Keep the most recent FFT bins so the scope can draw a real waveform shape
-  lastSpectrum = audioArray.slice(0, 32);
+  lastSpectrum = audioArray.slice(0, 48);
 
   // Calculate vocal range energy for lip-sync (bins 1-12)
   let vocalsSum = 0;
@@ -2191,9 +2588,11 @@ window.livelyWallpaperPlaybackChanged = function(data) {
   if (live2DController) {
     if (obj.IsPaused) {
       live2DController.pause();
+      onUserAway();
     } else {
       live2DController.resume();
       markActivity();
+      onUserReturn();
     }
   }
 };
@@ -2207,16 +2606,29 @@ window.livelyCurrentTrack = function(data) {
 
   const trackEl = document.getElementById('now-playing-track');
   const artistEl = document.getElementById('now-playing-artist');
+  const albumEl = document.getElementById('bg-album');
   if (!trackEl) return;
 
   if (!obj || !obj.Title) {
     trackEl.innerText = 'AUDIO_FEED_IDLE';
-    artistEl.innerText = '';
+    if (artistEl) artistEl.innerText = '';
+    if (albumEl) {
+      albumEl.classList.remove('visible');
+      albumEl.style.backgroundImage = '';
+    }
     return;
   }
 
   trackEl.innerText = obj.Title;
-  artistEl.innerText = obj.Artist ? `— ${obj.Artist}` : '';
+  if (artistEl) artistEl.innerText = obj.Artist ? `— ${obj.Artist}` : '';
+
+  // Push the track art into the dim blurred backdrop (fades in via CSS)
+  if (albumEl && obj.Thumbnail) {
+    albumEl.style.backgroundImage = 'url(data:image/png;base64,' + obj.Thumbnail + ')';
+    albumEl.classList.add('visible');
+  } else if (albumEl) {
+    albumEl.classList.remove('visible');
+  }
 };
 
 // --- BROWSER SIMULATION ENGINE (STANDALONE / FALLBACK MODE) ---
