@@ -223,6 +223,8 @@ class Live2DController {
         // (audio energy, speech, proximity, click surprises, long quiet spells)
         // so the procedural face/body subsystems have something to respond to.
         this._audioEnergy = 0;            // bass energy fed by wallpaper.js (0..1)
+        this._musicEnergy = 0;            // smoothed overall track energy (0..1)
+        this._musicEnergyTarget = 0;      // feed target from setMusicEnergy()
         this._lastAudioTime = 0;          // last time real audio was heard
         this._lastActivityTime = performance.now(); // audio or mouse activity
         this._surpriseUntil = 0;          // end of current surprised reaction
@@ -339,6 +341,29 @@ class Live2DController {
         }
         // Audio-reactive physics: more intense during strong beats
         this._updatePhysicsScale();
+    }
+
+    /**
+     * Music-aware mood feed: overall track loudness (not just bass), pushed in
+     * per audio frame. The loop smooths it with a quick attack and slow release
+     * so her energy follows the song's overall shape rather than every kick.
+     */
+    setMusicEnergy(level) {
+        this._musicEnergyTarget = Math.max(0, Math.min(1, level || 0));
+    }
+
+    /**
+     * Slow envelope for the music-aware mood: ~0.25s to rise with the music,
+     * ~3s to fall back after the track ends or goes quiet.
+     */
+    _updateMusicEnergy(dt) {
+        const t = this._musicEnergyTarget || 0;
+        if (this._musicEnergy < t) {
+            this._musicEnergy += (t - this._musicEnergy) * Math.min(1, dt * 0.01);
+        } else {
+            this._musicEnergy += (t - this._musicEnergy) * Math.min(1, dt * 0.002);
+        }
+        if (this._musicEnergy < 0.001) this._musicEnergy = 0;
     }
 
     /**
@@ -826,11 +851,13 @@ class Live2DController {
             const quiet = now - this._lastActivityTime;
             // At night she runs out of steam sooner; on a warm mood she keeps a
             // soft smile while idle, on a cold one she sits neutral and distant.
-            const quietLimit = this._night ? 60000 : 90000;
+            // Energetic music keeps her on her feet longer before drifting tired.
+            const quietLimit = (this._night ? 60000 : 90000) + this._musicEnergy * 30000;
             if (quiet > quietLimit) {
                 label = 'tired';
             } else if (quiet > 20000) {
-                label = this._mood >= 60 ? 'content' : 'neutral';
+                // A warm mood or a lively soundtrack keeps a soft smile on her face
+                label = (this._mood >= 60 || this._musicEnergy > 0.5) ? 'content' : 'neutral';
             }
         }
 
@@ -1150,6 +1177,7 @@ this.app = new PIXI.Application({
 
             // Update all subsystems
             this._updateTimeOfDay(timestamp);
+            this._updateMusicEnergy(clampedDt);
             this._updateProximity();
             this._updateAmbientMood(clampedDt);
             this._updatePhysicsScale(); // apply audio-reactive physics scaling
@@ -1267,6 +1295,9 @@ this.app = new PIXI.Application({
 
         // She focuses on you when the cursor hovers near her face
         target += this._proximity * 0.15;
+
+        // Music lifts her eyes: lively tracks keep her pupils bright and dilated
+        target += this._musicEnergy * 0.08;
 
         // Startle flash dilates the pupils hard, then the smoothing decays it
         if (now < this._surpriseUntil) target = Math.max(target, 1.45);
@@ -1662,6 +1693,8 @@ this.app = new PIXI.Application({
         let alpha = (seat.glow + flash * 0.10) * (0.45 + 0.55 * breathe) * (0.85 + 0.15 * p);
         // After dark the stage light dims — she's low-key about the hours
         alpha *= this._night ? 0.85 : 1;
+        // Music lifts the stage light: energetic tracks warm the glow a touch
+        alpha *= 1 + this._musicEnergy * 0.18;
         alpha = Math.max(0.02, Math.min(0.32, alpha));
         const rs = Math.round(r);
         const gs = Math.round(g);
@@ -1735,6 +1768,10 @@ this.app = new PIXI.Application({
             speedMult = 0.6;
             ampMult = 0.6; // shallow/slow breaths
         }
+
+        // Music-aware breathing: lively tracks quicken her breath a little
+        speedMult *= 1 + this._musicEnergy * 0.2;
+        ampMult *= 1 + this._musicEnergy * 0.25;
         
         br.phase += br.speed * speedMult * dt;
         if (br.phase > Math.PI * 2) br.phase -= Math.PI * 2;
@@ -1776,6 +1813,11 @@ this.app = new PIXI.Application({
         s.valueZ = Math.sin(s.phaseZ) * s.amplitudeZ * ampMult;
         s.valueX = Math.sin(s.phaseX) * s.amplitudeX * ampMult;
 
+        // Music groove: on energetic tracks a slow, song-length sway adds to
+        // the micro-sway so she visibly rides the track's overall energy.
+        const groove = this._musicEnergy * Math.sin(s.phaseZ * 0.13) * 1.6;
+        s.valueZ += groove;
+
         this.addToParameter('PARAM_BODY_ANGLE_Z', 'ParamBodyAngleZ', s.valueZ);
         this.addToParameter('PARAM_BODY_ANGLE_X', 'ParamBodyAngleX', s.valueX);
     }
@@ -1816,6 +1858,9 @@ this.app = new PIXI.Application({
             hs.valueX = Math.sin(hs.phaseX) * hs.amplitudeX * ampMult;
             hs.valueY = Math.sin(hs.phaseY) * hs.amplitudeY * ampMult;
             hs.valueZ = Math.sin(hs.phaseZ) * hs.amplitudeZ * ampMult;
+
+            // Music groove: a slow, song-length nod so she's visibly listening
+            hs.valueY += this._musicEnergy * Math.sin(hs.phaseY * 0.1) * 2.2;
         }
 
         // Peek override: on a return greeting she turns her head toward the
@@ -2448,6 +2493,7 @@ this.app = new PIXI.Application({
         return {
             emotion: this.currentEmotion,
             mood: Math.round(this._mood),
+            music: +this._musicEnergy.toFixed(2),
             night: this._night,
             hour: this._hour,
             proximity: +this._proximity.toFixed(2),

@@ -28,6 +28,7 @@ Interactive, sound-reactive Live2D wallpaper starring Makise Kurisu (Steins;Gate
 - **Self-initiated idle gestures** — when the desk has been quiet for a while she crosses her arms, glances up at the clock, or stretches, always gated away from speech, pets, and reactions.
 - **News-aware reactions** — she occasionally remarks on the Hacker News feed, picking out the stories that fit her obsessions (science, tech, world-line drama).
 - **Time-of-day mood** — after dark she blinks slower, keeps her pupils tighter, dims the stage light, and runs out of steam sooner.
+- **Music-aware mood** — the overall loudness of the playing track feeds a smoothed energy signal that dilates her pupils, quickens her breathing, adds a slow song-length groove to her body and head sway, lifts the stage light, and keeps her smiling and alert on upbeat tracks (releasing slowly when the music stops).
 - **Sleep/wake choreography** — falling asleep is now a slow eyelid close instead of a snap, and waking up gets a gentle stretch motion before the greeting.
 - **Debug overlay** — `Ctrl+Shift+D` streams the live Live2D parameter values (pupils, blend shapes, easter eggs, body angles) and draws the cheek-poke hit zone over the canvas, so the tuned constants can be verified against the running model (dev-only, no-op without the controller).
 
@@ -106,6 +107,7 @@ Kurisu's replies use the first available tier, in order:
 - **Rare ambient motions**: the Special motion group (haru_g_idle / xhiyori_m03) plays occasionally when she's calm and unoccupied, never during speech, petting, holds, or an active easter egg.
 - **Stage camera**: entrance fade-in with a settle on load, cursor-following parallax (±10px, gated while dragging/pet mode), and a proximity zoom up to ~4.5% when hovering her face.
 - **Beat bob**: `triggerBeat()` decays a quick side-to-side + forward/back body lean on each bass kick (fed from wallpaper.js's beat detector).
+- **Music-aware mood**: `setMusicEnergy(0–1)` receives the track's overall loudness every audio frame; a slow envelope (~0.25s attack, ~3s release) drives pupil dilation, breath rate/depth, a song-length body/head groove, stage-light brightness, and the ambient smile-vs-neutral choice.
 - **Cheek pokes**: spatial face-hit detection in `_onHit` — taps on the lower side of the head trigger a puffed-annoyed reaction with a RageSign flicker and a body recoil instead of a startle.
 - **Interactive pet animations**: dragging Kurisu triggers surprise reactions; repeated petting makes her progressively happier.
 - **Persistent mood**: `setMood(0–100)` tints the ambient smile-vs-neutral choice, the stage light hue (rose for warm, cool blue for cold), and the HUD chrome; wallpaper.js persists and drifts it, and feeds it back from every interaction (`onMood`).

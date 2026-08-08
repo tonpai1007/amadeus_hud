@@ -2850,6 +2850,15 @@ function handleAudioFrame(audioArray) {
     live2DController.setAudioEnergy(bassVal);
   }
 
+  // Feed the music-aware mood: overall track loudness (not just bass) so she
+  // visibly brightens on energetic tracks and calms on quiet ones.
+  let trackSum = 0;
+  for (let i = 0; i < audioArray.length; i++) trackSum += audioArray[i] || 0;
+  const trackVal = audioArray.length ? trackSum / audioArray.length : 0;
+  if (live2DController && live2DController.setMusicEnergy) {
+    live2DController.setMusicEnergy(trackVal);
+  }
+
   // Lip-Sync: Feed vocal frequency data to Kurisu's mouth animation
   if (live2DController && live2DController.setLipSync) {
     live2DController.setLipSync(vocalsAvg, audioArray, bassVal);
