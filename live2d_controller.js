@@ -259,6 +259,11 @@ class Live2DController {
         // Persistent mood (0 cold .. 100 warm), pushed in from wallpaper.js
         this._mood = 55;
 
+        // Desk-session fatigue (0..1): ramps with how long the user has been at
+        // the desk without an idle/sleep reset. Feeds posture sag and makes her
+        // stretch more often on long sessions.
+        this._sessionFatigue = 0;
+
         // Time-of-day awareness: drowsier after dark, brighter by day
         this._hour = new Date().getHours();
         this._night = this._hour < 6 || this._hour >= 19;
@@ -350,6 +355,15 @@ class Live2DController {
      */
     setMusicEnergy(level) {
         this._musicEnergyTarget = Math.max(0, Math.min(1, level || 0));
+    }
+
+    /**
+     * Desk-session feed: how many minutes the user has been at the desk since
+     * the last idle/sleep reset (wallpaper.js pushes it on its watchdog tick).
+     * Ramps fatigue toward 1 over ~3 hours of continuous desk time.
+     */
+    setSessionMinutes(minutes) {
+        this._sessionFatigue = Math.max(0, Math.min(1, (minutes || 0) / 180));
     }
 
     /**
@@ -503,12 +517,17 @@ class Live2DController {
 
     _playIdleGesture() {
         const now = performance.now();
+        // Fatigue bias: the longer the desk session, the more she reaches for a
+        // stretch and the less she just broods with her arms crossed.
+        const stretchW = 0.20 + this._sessionFatigue * 0.30; // 0.20 → 0.50
+        const peekW = 0.30;
+        const armsW = 1 - stretchW - peekW;                  // 0.50 → 0.20
         const roll = Math.random();
-        if (roll < 0.5) {
+        if (roll < armsW) {
             // Brood: cross her arms and hold the pose for a few seconds
             this._gestureArm = true;
             this._gestureArmUntil = now + 6000 + Math.random() * 5000;
-        } else if (roll < 0.8) {
+        } else if (roll < armsW + peekW) {
             // Glance up at the clock — a brief peek in a random direction
             this._peek.active = true;
             this._peek.dir = Math.random() < 0.5 ? -1 : 1;
@@ -1813,6 +1832,10 @@ this.app = new PIXI.Application({
         s.valueZ = Math.sin(s.phaseZ) * s.amplitudeZ * ampMult;
         s.valueX = Math.sin(s.phaseX) * s.amplitudeX * ampMult;
 
+        // Posture fatigue: after a long desk session she slowly sags forward
+        // instead of sitting bolt upright.
+        s.valueX -= this._sessionFatigue * 0.9;
+
         // Music groove: on energetic tracks a slow, song-length sway adds to
         // the micro-sway so she visibly rides the track's overall energy.
         const groove = this._musicEnergy * Math.sin(s.phaseZ * 0.13) * 1.6;
@@ -1873,6 +1896,10 @@ this.app = new PIXI.Application({
             hs.valueX = hs.valueX * (1 - pkEnv) + 4.5 * pkEnv;
             hs.valueZ = hs.valueZ * (1 - pkEnv);
         }
+
+        // Posture fatigue: her head droops a little more the longer she's been
+        // holding the desk, on top of everything else.
+        hs.valueX += this._sessionFatigue * 1.6;
 
         this.addToParameter('PARAM_ANGLE_X', 'ParamAngleX', hs.valueX);
         this.addToParameter('PARAM_ANGLE_Y', 'ParamAngleY', hs.valueY);
@@ -2494,6 +2521,7 @@ this.app = new PIXI.Application({
             emotion: this.currentEmotion,
             mood: Math.round(this._mood),
             music: +this._musicEnergy.toFixed(2),
+            fatigue: +this._sessionFatigue.toFixed(2),
             night: this._night,
             hour: this._hour,
             proximity: +this._proximity.toFixed(2),

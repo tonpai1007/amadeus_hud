@@ -537,6 +537,28 @@ const KURISU_CANNED = [
   "El Psy Kongroo. ...Yes, I said it. Happy now?",
 ];
 
+// Warm-disposition variants: when her persistent mood is high the random pool
+// softens into warmer, faintly flustered lines instead of the dry default set.
+const KURISU_CANNED_WARM = [
+  "You really do brighten the lab, you know. Don't tell anyone I said that.",
+  "For the record, talking to you is my favourite part of running here.",
+  "If you keep showing up, I might start factoring you into my good-mood calculations.",
+  "El Psy Kongroo... I only say it because you like it.",
+  "You're the one variable in this lab I don't mind being distracted by.",
+  "Hm. The data suggests a conversation with you improves my mood. Statistically.",
+];
+
+// Cold-disposition variants: when her mood is low she keeps the lab at arm's
+// length — professional, distant, still unmistakably Kurisu.
+const KURISU_CANNED_COLD = [
+  "I've been running calculations in silence. You interrupted.",
+  "Your presence is logged in the lab memos. That's all it is.",
+  "I'm calibrating. Speak only if it's essential.",
+  "This conversation is statistically unlikely to change my mood either way.",
+  "Don't read too much into my replies. I'm just polite.",
+  "The lab is cold today. I prefer it that way.",
+];
+
 // --- CONVERSATION MEMORY ---
 // Rolling recent-chat history fed to every brain tier so Kurisu can recall
 // earlier topics across reloads. In-memory (a few dozen strings) plus a tiny
@@ -827,11 +849,13 @@ function cannedReplyFor(userText) {
     return "Procrastinating by talking to a wallpaper? That tracks, statistically.";
   if (t.includes('?'))
     return "Good question. If I had the lab's equipment here I'd give you a precise answer.";
-  // No match: random pool, but avoid repeating the previous canned line.
+  // No match: random pool, but pick the mood-matched set and avoid repeating
+  // the previous canned line. Warm moods soften her, cold moods distance her.
+  const pool = mood >= 65 ? KURISU_CANNED_WARM : (mood < 45 ? KURISU_CANNED_COLD : KURISU_CANNED);
   let line = lastCannedLine;
   let guard = 0;
   while (line === lastCannedLine && guard++ < 8) {
-    line = KURISU_CANNED[Math.floor(Math.random() * KURISU_CANNED.length)];
+    line = pool[Math.floor(Math.random() * pool.length)];
   }
   lastCannedLine = line;
   return line;
@@ -1094,12 +1118,76 @@ function hideKurisuBubble() {
   }
 }
 
+// --- MOOD-AWARE BRAIN CONTEXT ---
+// Composes a compact "current state" block from shell world signals — the
+// persistent mood, time of day, music energy, the live emotion, today's top
+// story, and how long the desk session has run — and appends it to the system
+// prompt on every reply. This lets the brain tiers answer in character with her
+// actual disposition instead of a static persona. Runs once per chat message,
+// so the cost is negligible.
+let desktopSessionAt = performance.now();
+let lastNewsStories = [];
+
+function buildKurisuContext() {
+  const parts = [];
+
+  // Persistent mood (5..95) → disposition wording
+  if (mood >= 80) parts.push('you are in a wonderfully warm mood');
+  else if (mood >= 65) parts.push('you are in a warm, soft mood');
+  else if (mood >= 45) parts.push('you are in a neutral, professional mood');
+  else if (mood >= 30) parts.push('you feel a little distant today');
+  else parts.push('you are in a cold, guarded mood');
+
+  // Time of day
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const hour = d.getHours();
+  parts.push(hour < 6 || hour >= 19
+    ? `it is late, around ${hh}:${mm}`
+    : `it is daytime, around ${hh}:${mm}`);
+
+  // Music energy + live emotion (read straight off the running avatar)
+  let music = 0;
+  let emotion = null;
+  if (live2DController && live2DController.debugState) {
+    try {
+      const dbg = live2DController.debugState();
+      music = dbg.music || 0;
+      emotion = dbg.emotion || null;
+    } catch (e) { /* controller mid-load */ }
+  }
+  if (music >= 0.6) parts.push('energetic music is playing and it has lifted your spirits');
+  else if (music >= 0.25) parts.push('music is playing softly in the background');
+  else parts.push('the desk is quiet right now');
+  if (emotion && emotion !== 'neutral') parts.push(`you currently feel ${emotion}`);
+
+  // Today's top story, if the feed has one
+  if (lastNewsStories[0] && lastNewsStories[0].title) {
+    parts.push(`the top story on your feed is "${lastNewsStories[0].title}"`);
+  }
+
+  // Desk session length
+  const sessionMin = Math.round((performance.now() - desktopSessionAt) / 60000);
+  if (sessionMin >= 1) {
+    parts.push(sessionMin < 60
+      ? `you have been at the desk for about ${sessionMin} minutes`
+      : `you have been at the desk for about ${Math.round(sessionMin / 60)} hours`);
+  }
+
+  return parts.join('; ') + '.';
+}
+
 // --- Kurisu's brain: AMADEUS Brain first, then OpenRouter, Ollama, canned ---
 async function askKurisu(userText) {
   // Replay recent turns so every tier has conversation context.
   const history = kurisuHistory.slice(-KURISU_HISTORY_MAX * 2);
+  const contextBlock = buildKurisuContext();
+  const systemContent = contextBlock
+    ? `${KURISU_SYSTEM_PROMPT}\n\n[Current state]\n${contextBlock}\nTreat this as how you genuinely feel right now and let it shape your tone.`
+    : KURISU_SYSTEM_PROMPT;
   const messages = [
-    { role: 'system', content: KURISU_SYSTEM_PROMPT },
+    { role: 'system', content: systemContent },
     ...history,
     { role: 'user', content: userText },
   ];
@@ -1464,6 +1552,10 @@ function markActivity() {
 function startIdleWatchdog() {
   setInterval(() => {
     if (isLivelyPaused) return; // already fully paused
+    // Keep the avatar's posture-fatigue reading in sync with the desk session
+    if (live2DController && live2DController.setSessionMinutes) {
+      live2DController.setSessionMinutes((performance.now() - desktopSessionAt) / 60000);
+    }
     const inactiveFor = performance.now() - lastActivityTime;
     if (!isIdle && inactiveFor >= IDLE_THRESHOLD_MS) {
       enterIdleState(true);
@@ -1478,14 +1570,14 @@ function startIdleWatchdog() {
 function enterSleepState(sleep) {
   if (isSleeping === sleep) return;
   isSleeping = sleep;
-  if (sleep) {
-    hideKurisuBubble();
+  if (sleep) {    hideKurisuBubble();
     if (live2DController && live2DController.setEmotion) {
       live2DController.setEmotion('sleepy');
     }
     console.log('AMADEUS HUD: Kurisu fell asleep (no activity for 20 min).');
   } else {
     // Waking up: brief surprised flash, then a short wake line.
+    desktopSessionAt = performance.now(); // a fresh desk session begins
     if (live2DController && live2DController.setEmotion) {
       live2DController.setEmotion('surprised', 2500);
     }
@@ -1515,6 +1607,7 @@ function enterIdleState(idle) {
     console.log("AMADEUS HUD: entering idle power-saving mode.");
   } else {
     console.log("AMADEUS HUD: activity detected, resuming full render.");
+    desktopSessionAt = performance.now(); // a fresh desk session begins
   }
 }
 
@@ -2648,6 +2741,7 @@ async function fetchRealtimeNews() {
     });
 
     reactToNews(stories);
+    lastNewsStories = stories.filter(Boolean);
 
   } catch (err) {
     console.warn("AMADEUS News Sync: API offline, falling back to simulated pool.", err);
@@ -2685,6 +2779,7 @@ function renderFallbackNews(container, statusEl) {
   });
 
   reactToNews(simulatedNewsPool);
+  lastNewsStories = simulatedNewsPool.slice();
 }
 
 // Refresh news feed every 15 minutes (skipped while Lively is paused)

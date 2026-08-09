@@ -29,6 +29,9 @@ Interactive, sound-reactive Live2D wallpaper starring Makise Kurisu (Steins;Gate
 - **News-aware reactions** — she occasionally remarks on the Hacker News feed, picking out the stories that fit her obsessions (science, tech, world-line drama).
 - **Time-of-day mood** — after dark she blinks slower, keeps her pupils tighter, dims the stage light, and runs out of steam sooner.
 - **Music-aware mood** — the overall loudness of the playing track feeds a smoothed energy signal that dilates her pupils, quickens her breathing, adds a slow song-length groove to her body and head sway, lifts the stage light, and keeps her smiling and alert on upbeat tracks (releasing slowly when the music stops).
+- **Mood-aware brain context** — her replies carry her actual current state into the LLM: mood, time of day, music energy, live emotion, today's top story, and desk-session length are injected into the system prompt so the brain talks like the Kurisu living on *this* desktop right now.
+- **Mood-aware canned replies** — the offline fallback pool is bucketed by disposition (warm / neutral / cold), so even without a brain her answers match her persistent mood.
+- **Posture fatigue** — the longer you stay at the desk, the more she sags forward and the more she reaches for a stretch instead of brooding (resets when she dozes off or the desktop idles).
 - **Sleep/wake choreography** — falling asleep is now a slow eyelid close instead of a snap, and waking up gets a gentle stretch motion before the greeting.
 - **Debug overlay** — `Ctrl+Shift+D` streams the live Live2D parameter values (pupils, blend shapes, easter eggs, body angles) and draws the cheek-poke hit zone over the canvas, so the tuned constants can be verified against the running model (dev-only, no-op without the controller).
 
@@ -54,6 +57,8 @@ Kurisu's replies use the first available tier, in order:
    Free keys: <https://openrouter.ai/keys>.
 3. **Ollama** (local, offline). Starts automatically if the server is up at `http://localhost:11434`.
 4. **Canned replies** — offline Steins;Gate-flavored fallback pool.
+
+> **Mood-aware brain context:** every reply to tiers 0–3 appends a live `[Current state]` block to the system prompt — her persistent mood, time of day, music energy, live emotion, today's top story, and desk-session length — so the brain answers in character with her actual disposition instead of a static persona (`buildKurisuContext()` in `wallpaper.js`).
 
 > **Security:** `openrouter-key.js` and `brain-key.js` are gitignored. Never commit real API keys.
 
@@ -108,6 +113,9 @@ Kurisu's replies use the first available tier, in order:
 - **Stage camera**: entrance fade-in with a settle on load, cursor-following parallax (±10px, gated while dragging/pet mode), and a proximity zoom up to ~4.5% when hovering her face.
 - **Beat bob**: `triggerBeat()` decays a quick side-to-side + forward/back body lean on each bass kick (fed from wallpaper.js's beat detector).
 - **Music-aware mood**: `setMusicEnergy(0–1)` receives the track's overall loudness every audio frame; a slow envelope (~0.25s attack, ~3s release) drives pupil dilation, breath rate/depth, a song-length body/head groove, stage-light brightness, and the ambient smile-vs-neutral choice.
+- **Mood-aware brain context**: `buildKurisuContext()` composes the persistent mood, clock, music energy, live emotion, top feed story, and desk-session length into a `[Current state]` block appended to the system prompt in `askKurisu()`; the feed's stories and the desk-session clock are tracked in the shell for it.
+- **Mood-aware canned replies**: `cannedReplyFor()` picks its no-match pool from `KURISU_CANNED_WARM` (mood ≥ 65), `KURISU_CANNED_COLD` (mood < 45), or the default set — still avoiding immediate repeats.
+- **Posture fatigue**: `setSessionMinutes()` ramps `_sessionFatigue` to 1 over ~3h of desk time (pushed from the shell's idle watchdog, reset on idle/sleep wake); it sags body angle X and head droop, and biases `_playIdleGesture`'s stretch-vs-arms roll.
 - **Cheek pokes**: spatial face-hit detection in `_onHit` — taps on the lower side of the head trigger a puffed-annoyed reaction with a RageSign flicker and a body recoil instead of a startle.
 - **Interactive pet animations**: dragging Kurisu triggers surprise reactions; repeated petting makes her progressively happier.
 - **Persistent mood**: `setMood(0–100)` tints the ambient smile-vs-neutral choice, the stage light hue (rose for warm, cool blue for cold), and the HUD chrome; wallpaper.js persists and drifts it, and feeds it back from every interaction (`onMood`).
