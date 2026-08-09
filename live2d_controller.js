@@ -214,10 +214,12 @@ class Live2DController {
         // RAF handle for cleanup
         this._rafHandle = null;
         this._lastFrameTime = 0;
+        this._lastAnimTick = 0;        // frame gate for the parameter pipeline
+        this._animInterval = 1000 / 30; // param updates capped to render rate
+        this._activeMaxFps = 30;        // active render cap (governor may lower it)
 
         // Idle power-saving mode (set from wallpaper.js when system is silent)
         this._idleMode = false;
-        this._idleFrameSkip = 0;
 
         // Emotion engine — derives a live emotional state from real context
         // (audio energy, speech, proximity, click surprises, long quiet spells)
@@ -298,16 +300,14 @@ class Live2DController {
     setIdleMode(idle) {
         if (this._idleMode === idle) return;
         this._idleMode = !!idle;
+        this._setAnimRate();
         if (this.app && this.app.ticker) {
             // speed only slows animation time, not draw frequency — maxFPS
             // actually caps how often Pixi renders the model while idle.
             this.app.ticker.speed = idle ? 0.2 : 1.0;
             if (typeof this.app.ticker.maxFPS === 'number') {
-                this.app.ticker.maxFPS = idle ? 10 : 30;
+                this.app.ticker.maxFPS = idle ? 6 : this._activeMaxFps;
             }
-        }
-        if (idle) {
-            this._idleFrameSkip = 0;
         }
     }
 
@@ -324,6 +324,8 @@ class Live2DController {
         ];
         const cfg = levels[Math.max(0, Math.min(levels.length - 1, level))];
         this._basePhysicsScale = cfg.physicsScale;
+        this._activeMaxFps = cfg.maxFPS;
+        this._setAnimRate();
 
         if (this.app && this.app.ticker) {
             this.app.ticker.speed = cfg.animationSpeed;
@@ -331,6 +333,14 @@ class Live2DController {
                 this.app.ticker.maxFPS = cfg.maxFPS;
             }
         }
+    }
+
+    /**
+     * Keep the parameter pipeline's update rate tied to the actual render cap
+     * (idle 6fps, active 15/20/30fps) instead of rAF's 60fps.
+     */
+    _setAnimRate() {
+        this._animInterval = 1000 / (this._idleMode ? 6 : this._activeMaxFps);
     }
 
     /**
@@ -1171,6 +1181,7 @@ this.app = new PIXI.Application({
     _startLifelikeAnimations() {
         const now = performance.now();
         this._lastFrameTime = now;
+        this._lastAnimTick = now;
         this._blink.nextBlinkTime = now + this._randomRange(1000, 3000); // first blink soon
         this._idleEyes.nextChangeTime = now + 1000;
         this._brows.nextChangeTime = now + 3000;
@@ -1182,11 +1193,12 @@ this.app = new PIXI.Application({
             const coreModel = this.model.internalModel.coreModel;
             if (!coreModel) return;
 
-            // Idle power saving: run lifelike subsystems at ~1/6 rate
-            if (this._idleMode) {
-                if (++this._idleFrameSkip % 6 !== 0) return;
-                this._idleFrameSkip = 0;
-            }
+            // Cap the parameter pipeline to the actual render rate. Pixi draws
+            // at maxFPS (30 active / 6 idle), so a 60fps rAF recomputing every
+            // subsystem only burns CPU — all subsystems are time-based and the
+            // dt clamp absorbs the skipped frames with no visual change.
+            if (timestamp - this._lastAnimTick < this._animInterval) return;
+            this._lastAnimTick = timestamp;
 
             const dt = timestamp - this._lastFrameTime;
             this._lastFrameTime = timestamp;

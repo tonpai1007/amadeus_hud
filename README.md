@@ -95,6 +95,8 @@ Kurisu's replies use the first available tier, in order:
 - A performance governor measures real frame rate and dynamically steps down quality: rendering resolution, audio ring bar count, and texture detail.
 - **Texture LOD switching**: the model loads with 4096px textures at full quality; under performance pressure, texture resolution is downsampled to conserve VRAM.
 - **Dirty-checked parameter writes**: smoothed params skip re-queueing when already at target, and direct per-frame writes (eyes, brows, arms, easter eggs) only touch the model when the value actually moved — steady-state frames write almost nothing.
+- **Render-rate-capped parameter pipeline**: the Live2D parameter subsystems no longer run at rAF's 60fps — they're gated to exactly the Pixi draw rate (30fps active / 6fps idle, lower still under the perf governor), halving idle CPU with no visual change since the model was already drawn at that rate.
+- **Idle rendering at 6fps**: idle mode now draws the model at 6fps instead of 10fps (ticker speed 0.2, param updates tied to the same cap), and the per-audio-frame music-energy scan is skipped while idle.
 - **Reduced-motion respect**: `prefers-reduced-motion` disables the cosmetic body-motion schedulers (ambient Special motions, self-initiated idle gestures, idle chatter); breathing/blinking/sway and the `prefers-reduced-motion` CSS handling still apply.
 - **Storage hygiene**: chat log, chat history, and mood writes are capped and debounced (coalesced) with a pagehide flush, so bursts of activity cause one disk write instead of one per event.
 - `prefers-reduced-motion` is respected for CSS animations.
