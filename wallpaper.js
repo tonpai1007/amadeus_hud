@@ -237,10 +237,18 @@ function initPetMode() {
 // Persisted widget visibility + oscilloscope tuning, all optional.
 const SETTINGS_KEY = 'amadeus.settings';
 const SETTINGS_DEFAULTS = {
-  widgets: { scope: true, news: true, clock: true, ring: true, crt: true },
-   scope: { speed: 5, density: 5, ch1: '#ff4d55', ch2: '#ff55aa' },
+   widgets: { scope: true, news: true, clock: true, ring: true, crt: true },
+    scope: { speed: 5, density: 5, ch1: '#ff4d55', ch2: '#ff55aa' },
   pet: false,
   voice: true, // Kurisu speaks her lines aloud (TTS)
+  features: {
+    idleGestures: true,     // self-initiated arm-cross / clock glance / stretch
+    ambientMotions: true,   // rare full-body Special motions
+    easterEggs: true,       // blep / tears / rage / yandere moments
+    newsReactions: true,    // comments on the Hacker News feed
+    musicMood: true,        // track-loudness mood (pupils, groove, stage light)
+    postureFatigue: true,   // desk-session posture sag + stretch bias
+  },
 };
 let SETTINGS = null;
 
@@ -251,6 +259,7 @@ function loadSettings() {
     if (saved) {
       base.widgets = Object.assign(base.widgets, saved.widgets || {});
       base.scope = Object.assign(base.scope, saved.scope || {});
+      base.features = Object.assign(base.features, saved.features || {});
       if (typeof saved.pet === 'boolean') base.pet = saved.pet;
       if (typeof saved.voice === 'boolean') base.voice = saved.voice;
     }
@@ -266,6 +275,15 @@ function loadSettings() {
 
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS)); } catch (e) { /* ignore */ }
+}
+
+// Mirror the persisted feature toggles onto the avatar (called after the
+// controller initializes, since it may load after the settings panel).
+function pushFeaturesToController() {
+  if (!live2DController || !live2DController.setFeature) return;
+  for (const name of Object.keys(SETTINGS.features)) {
+    live2DController.setFeature(name, SETTINGS.features[name] !== false);
+  }
 }
 
 // --- MOOD MEMORY ---
@@ -381,6 +399,19 @@ function initSettings() {
       if (petApply) petApply(petCheck.checked);
     });
   }
+
+  // Kurisu behavior feature toggles (idle gestures, easter eggs, music mood...)
+  document.querySelectorAll('#settings-body input[data-feature]').forEach((input) => {
+    const name = input.dataset.feature;
+    input.checked = SETTINGS.features[name] !== false;
+    input.addEventListener('change', () => {
+      SETTINGS.features[name] = input.checked;
+      saveSettings();
+      if (live2DController && live2DController.setFeature) {
+        live2DController.setFeature(name, input.checked);
+      }
+    });
+  });
 
   // Voice Replies (TTS)
   const voiceCheck = document.getElementById('setting-voice');
@@ -2175,6 +2206,7 @@ async function initLive2D() {
   // Initialize the avatar
   // Path: live2d/kurisu/Kurisu.model3.json
   live2DController = new Live2DController('live2d-canvas', 'live2d/kurisu/Kurisu.model3.json');
+  pushFeaturesToController();
 
   // Touch reactions from the controller surface as small spoken bubbles.
   live2DController.onInteract = (line) => {
@@ -2641,6 +2673,7 @@ let lastNewsReactionAt = 0;
 // Occasionally (not on every refresh) she remarks on the feed. Gated the same
 // way as idle chatter: never while typing, idle, or asleep.
 function reactToNews(stories) {
+  if (SETTINGS.features.newsReactions === false) return; // toggled off
   const now = performance.now();
   if (now - lastNewsReactionAt < 20 * 60 * 1000) return; // ~3 comments/hour max
   if (isIdle || isSleeping || kurisuInput || !kurisuBubbleEl) return;
@@ -2948,8 +2981,8 @@ function handleAudioFrame(audioArray) {
   // Feed the music-aware mood: overall track loudness (not just bass) so she
   // visibly brightens on energetic tracks and calms on quiet ones. Skipped
   // while idle — there's no real audio to measure, and it saves a per-bin
-  // scan on every audio frame.
-  if (!isIdle) {
+  // scan on every audio frame — or when the feature is toggled off.
+  if (!isIdle && (!SETTINGS || SETTINGS.features.musicMood !== false)) {
     let trackSum = 0;
     for (let i = 0; i < audioArray.length; i++) trackSum += audioArray[i] || 0;
     const trackVal = audioArray.length ? trackSum / audioArray.length : 0;

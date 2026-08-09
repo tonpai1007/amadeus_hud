@@ -221,6 +221,16 @@ class Live2DController {
         // Idle power-saving mode (set from wallpaper.js when system is silent)
         this._idleMode = false;
 
+        // Feature toggles (mirrors the settings panel via wallpaper.js) so
+        // users can switch off the cosmetic/mood systems individually.
+        this._features = {
+            idleGestures: true,
+            ambientMotions: true,
+            easterEggs: true,
+            musicMood: true,
+            postureFatigue: true,
+        };
+
         // Emotion engine — derives a live emotional state from real context
         // (audio energy, speech, proximity, click surprises, long quiet spells)
         // so the procedural face/body subsystems have something to respond to.
@@ -359,6 +369,15 @@ class Live2DController {
     }
 
     /**
+     * Feature toggle from the settings panel (wallpaper.js mirrors them).
+     * Disabling a feature drops its runtime work entirely, not just its
+     * visual output.
+     */
+    setFeature(name, enabled) {
+        if (name in this._features) this._features[name] = !!enabled;
+    }
+
+    /**
      * Music-aware mood feed: overall track loudness (not just bass), pushed in
      * per audio frame. The loop smooths it with a quick attack and slow release
      * so her energy follows the song's overall shape rather than every kick.
@@ -373,6 +392,8 @@ class Live2DController {
      * Ramps fatigue toward 1 over ~3 hours of continuous desk time.
      */
     setSessionMinutes(minutes) {
+        // Disabled: fatigue stays pinned at zero so no posture sag happens
+        if (!this._features.postureFatigue) return;
         this._sessionFatigue = Math.max(0, Math.min(1, (minutes || 0) / 180));
     }
 
@@ -381,6 +402,12 @@ class Live2DController {
      * ~3s to fall back after the track ends or goes quiet.
      */
     _updateMusicEnergy(dt) {
+        // Disabled: hold at zero so no music-mood effects apply
+        if (!this._features.musicMood) {
+            this._musicEnergy = 0;
+            this._musicEnergyTarget = 0;
+            return;
+        }
         const t = this._musicEnergyTarget || 0;
         if (this._musicEnergy < t) {
             this._musicEnergy += (t - this._musicEnergy) * Math.min(1, dt * 0.01);
@@ -496,7 +523,8 @@ class Live2DController {
      */
     _startIdleGestures() {
         if (this._isCubism4 !== true) return;
-        // Skip cosmetic idle gestures for reduced-motion users
+        // Skip cosmetic idle gestures for reduced-motion users or if disabled
+        if (!this._features.idleGestures) return;
         if (this._reducedMotion()) return;
         const schedule = () => {
             const delay = 70000 + Math.random() * 50000;
@@ -1375,6 +1403,11 @@ this.app = new PIXI.Application({
      */
     _updateEasterEggs(now) {
         if (!this._ready || this._paused) return;
+        // Disabled: clear any lingering egg and never schedule a new one
+        if (!this._features.easterEggs) {
+            this._egg.type = null;
+            return;
+        }
 
         if (this._egg.type) {
             // Speech interrupts playful eggs but lets sad/angry ones linger
@@ -2186,7 +2219,8 @@ this.app = new PIXI.Application({
      */
     _startRareAmbientMotions() {
         if (this._isCubism4 !== true) return;
-        // Skip full-body motion events for reduced-motion users
+        // Skip full-body motion events for reduced-motion users or if disabled
+        if (!this._features.ambientMotions) return;
         if (this._reducedMotion()) return;
         const schedule = () => {
             const delay = 45000 + Math.random() * 45000;
