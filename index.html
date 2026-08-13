@@ -4,10 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AMADEUS Convergence Sync HUD</title>
-  <!-- Google Fonts for futuristic monospace and modern HUD headers -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+  <!-- Fonts are self-hosted (see @font-face in style.css, lib/fonts/) so the
+       HUD never depends on a network connection -->
   <link rel="stylesheet" href="style.css">
   <!-- Load PixiJS & Live2D SDK dependencies -->
   <script src="lib/pixi.min.js"></script>
@@ -46,9 +44,8 @@
     <span class="bubble-text" id="kurisu-bubble-text"></span><span class="bubble-caret" id="kurisu-bubble-caret"></span>
   </div>
 
-  <!-- Futuristic Scanline & Digital Grid Overlay -->
+  <!-- Futuristic Scanline Overlay -->
   <div class="crt-overlay"></div>
-  <div class="grid-overlay"></div>
   <!-- Unified CRT finish: barrel curvature + phosphor dots + corner vignette
        + soft bloom so every panel/piece sits inside the same tube -->
   <div class="crt-curve"></div>
@@ -56,6 +53,9 @@
   <div class="bloom-overlay"></div>
   <!-- Beat pulse: quick red bloom that flashes on the music's kick -->
   <div id="beat-glow"></div>
+  <!-- Time-of-day color wash: warm at midday, cool at night, driven by the
+       --daylight variable set each minute in applyTimeOfDay -->
+  <div class="time-tint"></div>
 
   <!-- HUD Interface Wrapper -->
   <div id="hud-container">
@@ -96,7 +96,7 @@
     </header>
 
     <!-- TOP RIGHT: Phosphor Oscilloscope -->
-    <section class="hud-panel top-right-panel" style="width: 380px;">
+    <section class="hud-panel top-right-panel">
       <div class="world-line-monitor">
         <div class="panel-header">
           <span class="panel-tag">// PHOSPHOR_OSCILLOSCOPE</span>
@@ -118,7 +118,7 @@
         <span class="panel-tag">// REALTIME_NEWS_FEED</span>
         <span class="pulse-text" id="news-status">LIVE_SYNC</span>
       </div>
-      <div class="panel-body" style="flex-grow: 1; overflow: hidden;">
+      <div class="panel-body news-panel-body">
         <div class="news-container" id="news-feed">
           <div class="news-loading">> Fetching global intelligence feed...</div>
         </div>
@@ -145,7 +145,7 @@
         <span class="panel-tag">// SYSTEM_OPTS</span>
         <span class="pulse-text" id="settings-state">OPEN</span>
       </div>
-      <div class="settings-body" id="settings-body" style="display: none;">
+      <div class="settings-body" id="settings-body">
         <div class="settings-group">
           <div class="settings-title">DISPLAY</div>
           <label class="setting-row"><span>Oscilloscope</span><input type="checkbox" data-widget="scope" checked></label>
@@ -155,6 +155,7 @@
           <label class="setting-row"><span>Chat Terminal</span><input type="checkbox" data-widget="chat" checked></label>
           <label class="setting-row"><span>CRT / Vignette</span><input type="checkbox" data-widget="crt" checked></label>
           <label class="setting-row"><span>Ambient BG</span><input type="checkbox" data-widget="bg" checked></label>
+          <label class="setting-row"><span>Terminal SFX</span><input type="checkbox" id="setting-sfx" checked></label>
           <label class="setting-row"><span>PET_MODE</span><input type="checkbox" id="setting-pet" checked></label>
           <label class="setting-row"><span>Voice Replies</span><input type="checkbox" id="setting-voice" checked></label>
         </div>

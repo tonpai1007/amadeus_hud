@@ -209,6 +209,7 @@ function initPetMode() {
     // Don't let clicking the toggle trigger the world-line shift.
     toggle.addEventListener('pointerdown', (e) => e.stopPropagation());
     toggle.addEventListener('click', () => {
+      playBeepSound();
       apply(!(live2DController && live2DController._petMode));
     });
   }
@@ -233,6 +234,80 @@ function initPetMode() {
   updateUI();
 }
 
+// --- RETRO TERMINAL SOUND FX SYSTEM (WEB AUDIO API SYNTHESIZER) ---
+let audioCtx = null;
+let sfxEnabled = true;
+
+function getAudioContext() {
+  if (!audioCtx) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) audioCtx = new AudioContextClass();
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    try { audioCtx.resume(); } catch (e) { /* ignore */ }
+  }
+  return audioCtx;
+}
+
+function playClickSound() {
+  if (!sfxEnabled || isIdle || isLivelyPaused) return;
+  try {
+    const actx = getAudioContext();
+    if (!actx) return;
+    const osc = actx.createOscillator();
+    const gain = actx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1200, actx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(300, actx.currentTime + 0.025);
+    gain.gain.setValueAtTime(0.06, actx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.025);
+    osc.connect(gain);
+    gain.connect(actx.destination);
+    osc.start(actx.currentTime);
+    osc.stop(actx.currentTime + 0.025);
+  } catch (e) { /* ignore */ }
+}
+
+function playBeepSound() {
+  if (!sfxEnabled || isIdle || isLivelyPaused) return;
+  try {
+    const actx = getAudioContext();
+    if (!actx) return;
+    const osc = actx.createOscillator();
+    const gain = actx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(880, actx.currentTime);
+    osc.frequency.setValueAtTime(1760, actx.currentTime + 0.03);
+    gain.gain.setValueAtTime(0.04, actx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.06);
+    osc.connect(gain);
+    gain.connect(actx.destination);
+    osc.start(actx.currentTime);
+    osc.stop(actx.currentTime + 0.06);
+  } catch (e) { /* ignore */ }
+}
+
+function playTransmitSound() {
+  if (!sfxEnabled || isIdle || isLivelyPaused) return;
+  try {
+    const actx = getAudioContext();
+    if (!actx) return;
+    const now = actx.currentTime;
+    const osc = actx.createOscillator();
+    const gain = actx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.exponentialRampToValueAtTime(1400, now + 0.04);
+    osc.frequency.exponentialRampToValueAtTime(900, now + 0.08);
+    gain.gain.setValueAtTime(0.08, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+    osc.connect(gain);
+    gain.connect(actx.destination);
+    osc.start(now);
+    osc.stop(now + 0.09);
+  } catch (e) { /* ignore */ }
+}
+
 // --- SETTINGS PANEL ---
 // Persisted widget visibility + oscilloscope tuning, all optional.
 const SETTINGS_KEY = 'amadeus.settings';
@@ -241,6 +316,7 @@ const SETTINGS_DEFAULTS = {
     scope: { speed: 5, density: 5, ch1: '#ff4d55', ch2: '#ff55aa' },
   pet: false,
   voice: true, // Kurisu speaks her lines aloud (TTS)
+  sfx: true,   // Terminal cathode sound effects (Web Audio API)
   features: {
     idleGestures: true,     // self-initiated arm-cross / clock glance / stretch
     ambientMotions: true,   // rare full-body Special motions
@@ -262,8 +338,9 @@ function loadSettings() {
       base.features = Object.assign(base.features, saved.features || {});
       if (typeof saved.pet === 'boolean') base.pet = saved.pet;
       if (typeof saved.voice === 'boolean') base.voice = saved.voice;
+      if (typeof saved.sfx === 'boolean') base.sfx = saved.sfx;
     }
-  } catch (e) { /* corrupt save â€” keep defaults */ }
+  } catch (e) { /* corrupt save — keep defaults */ }
 
   // Migrate old blue/green scope colors saved before the red-theme update so
   // persisted settings can't keep the waveform (CH1) and brain trace (CH2)
@@ -364,6 +441,7 @@ function hexToRgb(hex) {
 
 function initSettings() {
   SETTINGS = loadSettings();
+  sfxEnabled = SETTINGS.sfx !== false;
 
   const toggleBody = (el) => {
     const body = document.getElementById('settings-body');
@@ -372,12 +450,18 @@ function initSettings() {
     const open = body.style.display !== 'none';
     body.style.display = open ? 'none' : 'block';
     if (state) state.innerText = open ? 'OPEN' : 'CLOSE';
+    playBeepSound();
   };
   const header = document.getElementById('settings-toggle');
   const panel = document.getElementById('settings-panel');
   if (panel) panel.addEventListener('pointerdown', (e) => e.stopPropagation());
   if (header) header.addEventListener('pointerdown', (e) => e.stopPropagation());
   if (header) header.addEventListener('click', toggleBody);
+
+  // General SFX listener on all inputs
+  document.querySelectorAll('#settings-body input').forEach((input) => {
+    input.addEventListener('change', () => playClickSound());
+  });
 
   // Widget visibility checkboxes
   document.querySelectorAll('#settings-body input[data-widget]').forEach((input) => {
@@ -390,6 +474,19 @@ function initSettings() {
       saveSettings();
     });
   });
+
+  // Terminal Sound FX toggle
+  const sfxCheck = document.getElementById('setting-sfx');
+  if (sfxCheck) {
+    sfxCheck.checked = SETTINGS.sfx !== false;
+    sfxEnabled = sfxCheck.checked;
+    sfxCheck.addEventListener('change', () => {
+      sfxEnabled = sfxCheck.checked;
+      SETTINGS.sfx = sfxCheck.checked;
+      saveSettings();
+      if (sfxEnabled) playBeepSound();
+    });
+  }
 
   // PET_MODE via the same state machine as the HUD button
   const petCheck = document.getElementById('setting-pet');
@@ -1513,6 +1610,7 @@ function initKurisuChatInput() {
     if (kurisuReplying) return;
     const msg = (kurisuInputEl ? kurisuInputEl.value : kurisuInput).trim();
     if (!msg) return;
+    playTransmitSound();
     if (kurisuInputEl) kurisuInputEl.value = '';
     kurisuInput = '';
     if (live2DController) live2DController.isTyping = false;
@@ -2381,10 +2479,11 @@ function drawAudioRing(fftData, now) {
    for (let i = 0; i < numBars; i++) {
      const angle = (i / numBars) * Math.PI * 2;
      const value = fftData[i] || 0;
-     const lineLength = value * 110;
+     const maxLine = Math.min(audioCanvas.width, audioCanvas.height) * 0.08;
+     const lineLength = Math.min(value * 80 * PERF.dpr, maxLine);
      const freq = i / numBars;  // 0 = bass, 1 = treble
 
-     // Interpolate color across spectrum: crimson â white â hot pink
+     // Interpolate color across spectrum: crimson → white → hot pink
      const barColor = freqColor(freq);
 
      const x1 = cx + Math.cos(angle) * radius;
@@ -2392,17 +2491,17 @@ function drawAudioRing(fftData, now) {
      let x2 = cx + Math.cos(angle) * (radius + lineLength);
      let y2 = cy + Math.sin(angle) * (radius + lineLength);
 
-     // Gravitational lens: bars near the cursor bend toward it
+     // Gravitational lens: bars near the cursor bend gently toward it
      if (cursorSeen) {
        const mouseCX = cursorNX * audioCanvas.width;
        const mouseCY = cursorNY * audioCanvas.height;
-       const gravRadius = Math.min(audioCanvas.width, audioCanvas.height) * 0.30;
-       const mdx = x2 - mouseCX;
-       const mdy = y2 - mouseCY;
+       const gravRadius = Math.min(audioCanvas.width, audioCanvas.height) * 0.22;
+       const mdx = mouseCX - x2;
+       const mdy = mouseCY - y2;
        const md2 = mdx * mdx + mdy * mdy;
-       if (md2 < gravRadius * gravRadius) {
+       if (md2 < gravRadius * gravRadius && md2 > 0) {
          const d = Math.sqrt(md2);
-         const strength = (1 - d / gravRadius) * 0.45;
+         const strength = (1 - d / gravRadius) * 0.15;
          x2 += mdx * strength;
          y2 += mdy * strength;
        }

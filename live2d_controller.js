@@ -177,6 +177,18 @@ class Live2DController {
             lastMoveTime: 0,
             idleThreshold: 2000,       // ms of mouse inactivity before idle eyes activate
         };
+        // Cursor-velocity tracking for the fast-flick glance reaction
+        this._lastMoveAt = 0;
+        this._lastMoveX = 0;
+        this._lastMoveY = 0;
+        this._cursorVelocity = 0;
+        this._flinchAt = 0;            // cooldown guard for flick glances
+
+        // Startle breath-hold: a short pause in breathing right after surprise
+        this._breathHoldUntil = 0;
+
+        // Cold-night shiver: subtle periodic tremor when her mood is cold
+        this._shiver = { active: false, until: 0, nextAt: performance.now() + 15000 };
 
         // Proximity awareness: how close the cursor is to Kurisu's face (0..1).
         // Drives blush, breathing intensity, and how much she glances around.
@@ -462,7 +474,60 @@ class Live2DController {
         if (now - this._lastSurprise < 2500) return;
         this._lastSurprise = now;
         this._surpriseUntil = now + 1500;
+        this._breathHoldUntil = now + 1000; // startle breath-hold ~1s
         this.setEmotion('surprised');
+    }
+
+    /**
+     * Brain-dictated movement: the reply's hidden <action> tag lands here and
+     * maps to a whitelisted choreography built from existing primitives
+     * (peek, stretch, surprise, shiver, beat bob). Names come from the
+     * KURISU_ACTION_TAGS whitelist in wallpaper.js — never raw params.
+     */
+    playChoreo(name, emotionLabel) {
+        if (!this._ready || this._paused) return;
+        const now = performance.now();
+        switch (name) {
+            case 'stretch':
+                // Cross arms briefly with a soft body wiggle
+                this._gestureArm = true;
+                this._gestureArmUntil = now + 3200;
+                this._stretchUntil = now + 1400;
+                if (this._beatBob) this._beatBob.pulse = Math.max(this._beatBob.pulse || 0, 0.45);
+                break;
+            case 'brood':
+                // Cross her arms and hold the pose a few seconds
+                this._gestureArm = true;
+                this._gestureArmUntil = now + 5000;
+                break;
+            case 'turnaway':
+                // Dismissive glance away (left) held a beat longer
+                this._peek.active = true;
+                this._peek.dir = -1;
+                this._peek.started = now;
+                this._peek.until = now + 1600;
+                this._peekEnv = 0;
+                break;
+            case 'glance_up':
+                // Curious glance toward a random side
+                this._peek.active = true;
+                this._peek.dir = Math.random() < 0.5 ? -1 : 1;
+                this._peek.started = now;
+                this._peek.until = now + 1200;
+                this._peekEnv = 0;
+                break;
+            case 'excited_leap':
+                // Startled hop + excited face + a beat pulse
+                this.triggerSurprise();
+                this.setEmotion('excited', 5000);
+                if (this._beatBob) this._beatBob.pulse = Math.max(this._beatBob.pulse || 0, 0.9);
+                break;
+            case 'shiver':
+                // Force a cold shiver regardless of mood/time
+                this._shiver.active = true;
+                this._shiver.until = now + 700;
+                break;
+        }
     }
 
     /**
@@ -1075,15 +1140,20 @@ class Live2DController {
 
         // Create PixiJS Application only if it doesn't exist
         if (!this.app) {
-this.app = new PIXI.Application({
-            view: canvas,
-            autoStart: true,
-            backgroundAlpha: 0,
-            antialias: true,
-            transparent: true,
-            // Cap backing resolution to 1.0x to keep GPU/VRAM cost down
-            resolution: 1.0,
-        });
+            try {
+                this.app = new PIXI.Application({
+                    view: canvas,
+                    autoStart: true,
+                    backgroundAlpha: 0,
+                    antialias: true,
+                    transparent: true,
+                    // Cap backing resolution to 1.0x to keep GPU/VRAM cost down
+                    resolution: 1.0,
+                });
+            } catch (err) {
+                console.error('[L2D] WebGL/Pixi init failed:', err);
+                return false;
+            }
 
         // Cap the render loop to 30fps: the HUD visuals redraw at ~30fps, so
         // rendering the Live2D stage any faster just wastes GPU/CPU cycles.
@@ -1243,6 +1313,7 @@ this.app = new PIXI.Application({
             this._updatePeek(timestamp, clampedDt);
             this._updateBeatBob(clampedDt, coreModel);
             this._updatePokeRecoil(timestamp, coreModel);
+            this._updateShiver(timestamp, coreModel);
             this._updateBlink(timestamp, clampedDt, coreModel);
             this._updateBreathing(clampedDt, coreModel);
             this._updateBodySway(clampedDt, coreModel);
@@ -1573,6 +1644,37 @@ this.app = new PIXI.Application({
     }
 
     /**
+     * Cold-night shiver: when her persistent mood is cold (distant) and it's
+     * after dark, she occasionally trembles for ~700ms — a quick, decaying
+     * oscillation on the body and head. Self-scheduled with a long cooldown.
+     */
+    _updateShiver(now, coreModel) {
+        const s = this._shiver;
+        const coldNight = this._mood < 45 && this._night;
+        if (s.active) {
+            if (now >= s.until) {
+                s.active = false;
+                return;
+            }
+            const t = (s.until - now) / 700; // 1 → 0
+            const shiver = Math.sin(now * 0.045) * 0.7 * t;
+            this.addToParameter('PARAM_BODY_ANGLE_X', 'ParamBodyAngleX', shiver);
+            this.addToParameter('PARAM_ANGLE_Z', 'ParamAngleZ', shiver * 0.6);
+            return;
+        }
+        if (!coldNight || this.isSpeaking || this._petMode || this._paused || !this._ready ||
+            ['sleepy', 'sleeping'].includes(this.currentEmotion)) {
+            s.nextAt = now + 15000;
+            return;
+        }
+        if (now >= s.nextAt) {
+            s.active = true;
+            s.until = now + 700;
+            s.nextAt = now + 12000 + Math.random() * 8000;
+        }
+    }
+
+    /**
      * Peek envelope: while the peek reaction is active, advance a smooth
      * ease-in / hold / ease-out envelope that _updateHeadSway and
      * _updateIdleEyes read to aim her glance.
@@ -1816,7 +1918,15 @@ this.app = new PIXI.Application({
      */
     _updateBreathing(dt, coreModel) {
         const br = this._breath;
-        
+
+        // Startle breath-hold: freeze mid-breath for ~1s after a surprise,
+        // then resume the sine where it left off.
+        if (performance.now() < this._breathHoldUntil) {
+            br.value = 0.15;
+            this.setParameter('PARAM_BREATH', 'ParamBreath', br.value);
+            return;
+        }
+
         let speedMult = 1.0;
         let ampMult = 1.0;
         
@@ -2352,6 +2462,28 @@ this.app = new PIXI.Application({
         document.addEventListener('mousemove', (e) => {
             this._mouseActivity.lastMoveTime = performance.now();
             this._lastActivityTime = performance.now();
+
+            // Fast cursor flicks earn a quick glance in the direction of travel
+            const now = performance.now();
+            const vx = e.clientX - this._lastMoveX;
+            const vy = e.clientY - this._lastMoveY;
+            const dtm = now - this._lastMoveAt;
+            this._lastMoveX = e.clientX;
+            this._lastMoveY = e.clientY;
+            this._lastMoveAt = now;
+            const vel = dtm > 0 ? Math.hypot(vx, vy) / dtm : 0;
+            this._cursorVelocity = this._cursorVelocity * 0.6 + vel * 0.4;
+            if (now - this._flinchAt > 4000 && this._cursorVelocity > 1.8 && vx !== 0 &&
+                !this.isSpeaking && !this._petMode && !this._paused && this._ready &&
+                !this._peek.active) {
+                this._flinchAt = now;
+                this._peek.active = true;
+                this._peek.dir = vx > 0 ? 1 : -1;
+                this._peek.started = now;
+                this._peek.until = now + 700;
+                this._peekEnv = 0;
+            }
+
             const rect = view.getBoundingClientRect();
             // Always track raw cursor position (even outside the margin) so
             // proximity can fall to 0 when the mouse leaves her area

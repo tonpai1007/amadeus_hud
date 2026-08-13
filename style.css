@@ -30,6 +30,59 @@
   --font-body: 'Outfit', sans-serif;
 }
 
+/* Self-hosted fonts (lib/fonts/) so the HUD never depends on the network.
+   Orbitron and Outfit are variable fonts covering their full weight axes,
+   so each weight below points at the same file. */
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('lib/fonts/orbitron.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('lib/fonts/orbitron.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url('lib/fonts/orbitron.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Share Tech Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('lib/fonts/sharetechmono.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('lib/fonts/outfit.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('lib/fonts/outfit.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('lib/fonts/outfit.woff2') format('woff2');
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -353,6 +406,26 @@ body.night-mode {
   mix-blend-mode: screen;
 }
 
+/* Time-of-day color wash: the whole tube — HUD chrome, Live2D stage and
+   backdrop — slowly drifts from warm at midday to cool at midnight, driven by
+   the --daylight variable (1 = midday, 0 = midnight, set every minute in
+   applyTimeOfDay). One soft-light blend, so it costs nothing extra on weak
+   GPUs; the 60s transition turns the minute-steps into a continuous drift.
+   Falls back to transparent (no tint) if color-mix is unavailable. */
+.time-tint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 995;
+  pointer-events: none;
+  background: color-mix(in srgb, #ff9e6b calc(var(--daylight, 0.5) * 100%), #132050);
+  opacity: 0.18;
+  mix-blend-mode: soft-light;
+  transition: background 60s linear;
+}
+
 /* Authentic CRT tube: rounded-grill barrel shading + faint phosphor dot grid
    + soft chromatic fringing at the edges. Sits just under the scanlines so
    the whole desktop reads as one screen. */
@@ -367,7 +440,7 @@ body.night-mode {
   border-radius: 2.6% / 2.4%;
   background:
     radial-gradient(ellipse at center, transparent 62%, rgba(5, 14, 30, 0.30) 96%, rgba(0, 0, 0, 0.6) 100%),
-    linear-gradient(90deg, rgba(255, 60, 120, 0.045), transparent 9%, transparent 91%, rgba(60, 160, 255, 0.045));
+    linear-gradient(90deg, transparent, transparent 9%, transparent 91%, rgba(60, 160, 255, 0.045));
   box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.35);
 }
 
@@ -405,22 +478,6 @@ body.night-mode {
    GPU-filter costs and power-saving mode shouldn't pay for it. */
 body.idle #bg-album {
   opacity: 0;
-}
-
-/* Cyberpunk Digital Grid Overlay */
-.grid-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-   background-image: 
-     linear-gradient(rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.055) 1px, transparent 1px),
-     linear-gradient(90deg, rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.055) 1px, transparent 1px);
-  background-size: 50px 50px;
-  background-position: center;
-  z-index: 3;
-  pointer-events: none;
 }
 
 /* HUD Layout Elements */
@@ -932,9 +989,18 @@ body.idle #bg-album {
   gap: 12px;
 }
 
+.news-panel-body {
+  flex-grow: 1;
+  overflow: hidden;
+}
+
 .news-domain {
   color: var(--primary-pink);
   font-weight: bold;
+}
+
+#settings-body {
+  display: none;
 }
 
 .pulse-text {
@@ -1235,7 +1301,6 @@ body.hide-clock .top-left-panel,
 body.hide-chat .chat-panel,
 body.hide-ring #audio-canvas,
 body.hide-bg #bg-canvas,
-body.hide-bg .grid-overlay,
 body.hide-bg #bg-album,
 body.hide-crt .crt-overlay,
 body.hide-crt .crt-curve,
@@ -1269,8 +1334,8 @@ body.idle .bloom-overlay {
   opacity: 0.35;
 }
 
-body.idle .grid-overlay {
-  opacity: 0.15;
+body.idle .time-tint {
+  opacity: 0.08;
 }
 
 body.idle .center-banner,
@@ -1294,10 +1359,6 @@ body.user-away .hud-panel {
 }
 
 body.user-away .crt-overlay {
-  opacity: 0.2;
-}
-
-body.user-away .grid-overlay {
   opacity: 0.2;
 }
 
