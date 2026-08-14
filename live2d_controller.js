@@ -1279,7 +1279,7 @@ class Live2DController {
     _startLifelikeAnimations() {
         const now = performance.now();
         this._lastFrameTime = now;
-        this._lastAnimTick = now;
+        this._lastAnimTick = 0;
         this._blink.nextBlinkTime = now + this._randomRange(1000, 3000); // first blink soon
         this._idleEyes.nextChangeTime = now + 1000;
         this._brows.nextChangeTime = now + 3000;
@@ -1295,7 +1295,7 @@ class Live2DController {
             // at maxFPS (30 active / 6 idle), so a 60fps rAF recomputing every
             // subsystem only burns CPU — all subsystems are time-based and the
             // dt clamp absorbs the skipped frames with no visual change.
-            if (timestamp - this._lastAnimTick < this._animInterval) return;
+            if (this._lastAnimTick > 0 && timestamp - this._lastAnimTick < this._animInterval) return;
             this._lastAnimTick = timestamp;
 
             const dt = timestamp - this._lastFrameTime;

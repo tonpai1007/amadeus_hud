@@ -3098,7 +3098,10 @@ function handleAudioFrame(audioArray) {
   // Idle mode: skip heavy canvas redraws until real audio/mouse activity returns
   if (isIdle) return;
   // Skip the ring redraw entirely when the widget is hidden in settings
-  if (document.body.classList.contains('hide-ring')) return;
+  if (document.body.classList.contains('hide-ring')) {
+    if (ctx && audioCanvas) ctx.clearRect(0, 0, audioCanvas.width, audioCanvas.height);
+    return;
+  }
 
   // Heavy canvas redraws throttled to PERF.visualFps â€” lip-sync above stays live.
   const now = performance.now();
