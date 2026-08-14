@@ -1,0 +1,39 @@
+{
+  "crtScanline": {
+    "type": "slider",
+    "text": "CRT Scanline & Flicker Intensity",
+    "value": 50,
+    "min": 0,
+    "max": 100,
+    "step": 5
+  },
+  "scopeSpeed": {
+    "type": "slider",
+    "text": "Phosphor Oscilloscope Speed",
+    "value": 5,
+    "min": 1,
+    "max": 10,
+    "step": 1
+  },
+  "showAudioRing": {
+    "type": "checkbox",
+    "text": "Audio Ring & Mechanical Clockwork",
+    "value": true
+  },
+  "petMode": {
+    "type": "checkbox",
+    "text": "Pet Mode (Draggable Avatar)",
+    "value": false
+  },
+  "perfGovernor": {
+    "type": "dropdown",
+    "text": "Performance Governor",
+    "value": 2,
+    "items": ["Saver (15fps)", "Balanced (20fps)", "High (30fps)"]
+  },
+  "voiceEnabled": {
+    "type": "checkbox",
+    "text": "Kurisu Voice Synthesis (TTS)",
+    "value": true
+  }
+}
