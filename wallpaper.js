@@ -326,7 +326,7 @@ const SETTINGS_DEFAULTS = {
     postureFatigue: true,   // desk-session posture sag + stretch bias
   },
 };
-let SETTINGS = null;
+let SETTINGS = SETTINGS_DEFAULTS;
 
 function loadSettings() {
   const base = JSON.parse(JSON.stringify(SETTINGS_DEFAULTS));
@@ -358,6 +358,7 @@ function saveSettings() {
 // controller initializes, since it may load after the settings panel).
 function pushFeaturesToController() {
   if (!live2DController || !live2DController.setFeature) return;
+  if (!SETTINGS || !SETTINGS.features) return;
   for (const name of Object.keys(SETTINGS.features)) {
     live2DController.setFeature(name, SETTINGS.features[name] !== false);
   }

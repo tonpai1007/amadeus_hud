@@ -1253,10 +1253,8 @@ class Live2DController {
 
             this._ready = true;
 
-            // Entrance: fade her in with a gentle settle right after load
-            this._entrance.active = true;
-            this._entrance.start = performance.now();
-            this.model.alpha = 0;
+            // Entrance: ensure her model is fully visible right after load
+            this.model.alpha = 1.0;
 
             // If pet mode was restored before the model finished loading,
             // place her at the saved spot now that we can.
