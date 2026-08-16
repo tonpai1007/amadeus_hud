@@ -1200,6 +1200,55 @@ body.idle .chat-panel {
   transition: opacity 0.2s ease, transform 0.1s ease;
 }
 
+.chat-mic {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  background: rgba(8, 10, 18, 0.85);
+  border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.35);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.chat-mic:hover {
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.15);
+  border-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.6);
+}
+
+.chat-mic.listening {
+  background: rgba(255, 77, 85, 0.35);
+  border-color: #ff4d55;
+  box-shadow: 0 0 14px rgba(255, 77, 85, 0.5);
+  animation: mic-pulse 1s infinite alternate;
+}
+
+@keyframes mic-pulse {
+  from { transform: scale(1.0); }
+  to { transform: scale(1.08); }
+}
+
+.biz-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: rgba(255, 77, 85, 0.08);
+  border: 1px solid rgba(255, 77, 85, 0.25);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.biz-val {
+  font-weight: 700;
+  color: #ffd0a0;
+}
+
 .chat-send:hover {
   opacity: 0.85;
   transform: translateY(-1px);

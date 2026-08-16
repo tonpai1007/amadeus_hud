@@ -112,10 +112,10 @@
       </div>
     </section>
 
-    <!-- BOTTOM LEFT: Live News Feed -->
+    <!-- BOTTOM LEFT: Live News Feed & Business Ops -->
     <section class="hud-panel bottom-left-panel">
       <div class="panel-header">
-        <span class="panel-tag">// REALTIME_NEWS_FEED</span>
+        <span class="panel-tag feed-toggle" id="feed-tag" style="cursor:pointer;" title="Click to toggle News / Business Ops">// REALTIME_NEWS_FEED</span>
         <span class="pulse-text" id="news-status">LIVE_SYNC</span>
       </div>
       <div class="panel-body news-panel-body">
@@ -133,6 +133,7 @@
       </div>
       <div class="chat-log" id="chat-log"></div>
       <div class="chat-input-row">
+        <button class="chat-mic" id="chat-mic" type="button" title="Push to talk (Ctrl+Shift+M)">🎙️</button>
         <input class="chat-input" id="kurisu-input" type="text"
                placeholder="> transmit to Kurisu... [Enter]" autocomplete="off" spellcheck="false">
         <button class="chat-send" id="chat-send" type="button">SEND</button>

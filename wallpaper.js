@@ -88,11 +88,13 @@ window.addEventListener('DOMContentLoaded', () => {
   initAudioCanvas();
   initLive2D().then(kurisuGreetOnLoad);
   initTTS();
+  initSpeechRecognition();
   initLivelyWebSocket();
   initWorldLine();
   initBackground();
   startVisualLoop();
   fetchRealtimeNews();
+  setInterval(fetchRealtimeNews, 45000);
   startIdleWatchdog();
   scheduleIdleChatter();
   initKurisuBubble();
@@ -432,6 +434,10 @@ function initLivelyWebSocket() {
           const goalEl = document.getElementById('news-status');
           if (goalEl) goalEl.textContent = `GOAL: ${data.system.active_goals[0].substring(0, 14)}`;
         }
+        if (data.business) {
+          lastBusinessData = data.business;
+          if (feedMode === 'business') renderBusinessFeed();
+        }
       } catch (e) { /* ignore JSON parse */ }
     };
     livelyWS.onclose = () => {
@@ -443,6 +449,170 @@ function initLivelyWebSocket() {
     };
   } catch (err) {
     wsReconnectTimer = setTimeout(initLivelyWebSocket, 6000);
+  }
+}
+
+// --- LIVE INTELLIGENCE & BUSINESS OPERATIONS FEED ---
+let feedMode = 'news'; // 'news' | 'business'
+let lastBusinessData = null;
+let lastNewsItems = [];
+
+async function fetchRealtimeNews() {
+  const container = document.getElementById('news-feed');
+  const feedTag = document.getElementById('feed-tag');
+  if (feedTag && !feedTag._bound) {
+    feedTag._bound = true;
+    feedTag.addEventListener('click', toggleFeedMode);
+  }
+
+  if (feedMode === 'business') {
+    renderBusinessFeed();
+    return;
+  }
+
+  try {
+    const res = await fetch('https://hn.algolia.com/api/v1/search_by_date?tags=front_page&hitsPerPage=5');
+    if (!res.ok) throw new Error('News network error');
+    const data = await res.json();
+    if (data && data.hits && data.hits.length > 0) {
+      lastNewsItems = data.hits;
+      renderNewsFeed(lastNewsItems);
+    }
+  } catch (err) {
+    if (container && lastNewsItems.length === 0) {
+      container.innerHTML = '<div class="news-item">> Intelligence feed running on standby</div>';
+    }
+  }
+}
+
+function toggleFeedMode() {
+  feedMode = (feedMode === 'news') ? 'business' : 'news';
+  const feedTag = document.getElementById('feed-tag');
+  if (feedTag) {
+    feedTag.textContent = (feedMode === 'business') ? '// BUSINESS_OPS' : '// REALTIME_NEWS_FEED';
+  }
+  if (feedMode === 'business') {
+    renderBusinessFeed();
+  } else {
+    renderNewsFeed(lastNewsItems);
+  }
+}
+
+function renderNewsFeed(items) {
+  const container = document.getElementById('news-feed');
+  if (!container || !items || items.length === 0) return;
+  const html = items.slice(0, 4).map(item => `
+    <div class="news-item">
+      <span class="news-title">${escapeHtml(item.title || 'Intel Update')}</span>
+      <span class="news-meta">SCORE: ${item.points || 0} // ${new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+    </div>
+  `).join('');
+  container.innerHTML = html;
+}
+
+function renderBusinessFeed() {
+  const container = document.getElementById('news-feed');
+  if (!container) return;
+  const rev = lastBusinessData ? (lastBusinessData.revenue_thb || 0).toLocaleString() : '0';
+  const orders = lastBusinessData ? (lastBusinessData.orders_count || 0) : '0';
+  const status = (lastBusinessData && lastBusinessData.status === 'online') ? 'CONNECTED' : 'STANDBY';
+
+  container.innerHTML = `
+    <div class="biz-card">
+      <span>TONPAI_ICE_REVENUE</span>
+      <span class="biz-val">฿ ${rev} THB</span>
+    </div>
+    <div class="biz-card">
+      <span>ORDERS_TODAY</span>
+      <span class="biz-val">${orders} TICKETS</span>
+    </div>
+    <div class="biz-card">
+      <span>LOYVERSE_SYNC</span>
+      <span class="biz-val" style="color:#ff4d55;">${status}</span>
+    </div>
+  `;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+}
+
+// --- FULL-DUPLEX VOICE INPUT (WEB SPEECH API) ---
+let speechRecognition = null;
+let isListening = false;
+
+function initSpeechRecognition() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const micBtn = document.getElementById('chat-mic');
+  if (!SpeechRec) {
+    if (micBtn) micBtn.style.display = 'none';
+    return;
+  }
+
+  try {
+    speechRecognition = new SpeechRec();
+    speechRecognition.continuous = false;
+    speechRecognition.interimResults = false;
+    speechRecognition.lang = 'en-US';
+
+    speechRecognition.onstart = () => {
+      isListening = true;
+      if (micBtn) micBtn.classList.add('listening');
+      if (kurisuInputEl) kurisuInputEl.placeholder = '> Listening to your voice...';
+    };
+
+    speechRecognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      if (transcript) {
+        if (kurisuInputEl) kurisuInputEl.value = transcript;
+        kurisuInput = transcript;
+        kurisuSay(transcript);
+      }
+    };
+
+    speechRecognition.onerror = (e) => {
+      console.warn('[Kurisu] Mic speech recognition error:', e.error);
+      stopListening();
+    };
+
+    speechRecognition.onend = () => {
+      stopListening();
+    };
+
+    if (micBtn) {
+      micBtn.addEventListener('click', () => {
+        if (isListening) stopListening();
+        else startListening();
+      });
+    }
+
+    // Push-to-talk hotkey (Ctrl + Shift + M)
+    window.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === 'M' || e.key === 'm')) {
+        e.preventDefault();
+        if (isListening) stopListening();
+        else startListening();
+      }
+    });
+  } catch (e) {
+    console.warn('[Kurisu] Speech recognition initialization failed:', e.message);
+  }
+}
+
+function startListening() {
+  if (!speechRecognition || isListening) return;
+  try {
+    speechRecognition.start();
+  } catch (e) { /* ignore */ }
+}
+
+function stopListening() {
+  isListening = false;
+  const micBtn = document.getElementById('chat-mic');
+  if (micBtn) micBtn.classList.remove('listening');
+  if (kurisuInputEl) kurisuInputEl.placeholder = '> transmit to Kurisu... [Enter]';
+  if (speechRecognition) {
+    try { speechRecognition.stop(); } catch (e) {}
   }
 }
 
@@ -1584,6 +1754,16 @@ async function kurisuSay(userText) {
   }
   showKurisuThinking();
   setUplink('thinking', 'UPLINK: SYNTH');
+
+  // Trigger vision screen capture if user asks about the desktop screen
+  if (/\b(screen|look at|what am i|analyze screen|see what|my desk)\b/i.test(msg) && KURISU_BRAIN.apiKey) {
+    try {
+      await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/vision-capture`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${KURISU_BRAIN.apiKey}` }
+      });
+    } catch (e) { /* ignore vision capture network error */ }
+  }
 
   const reply = await askKurisu(msg);
 
