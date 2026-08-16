@@ -374,7 +374,7 @@ body.night-mode {
   background-size: 100% 4px, 6px 100%;
   z-index: 999;
   pointer-events: none;
-  opacity: 0.55;
+  opacity: var(--crt-scanline-opacity, 0.55);
 }
 
 /* Unified CRT finish: corner vignette + soft bloom so every panel and the

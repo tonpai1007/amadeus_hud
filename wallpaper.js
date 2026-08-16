@@ -312,8 +312,8 @@ function playTransmitSound() {
 // Persisted widget visibility + oscilloscope tuning, all optional.
 const SETTINGS_KEY = 'amadeus.settings';
 const SETTINGS_DEFAULTS = {
-   widgets: { scope: true, news: true, clock: true, ring: true, crt: true },
-    scope: { speed: 5, density: 5, ch1: '#ff4d55', ch2: '#ff55aa' },
+  widgets: { scope: true, news: true, clock: true, ring: true, crt: true, chat: true, bg: true },
+  scope: { speed: 5, density: 5, ch1: '#ff4d55', ch2: '#ff55aa' },
   pet: false,
   voice: true, // Kurisu speaks her lines aloud (TTS)
   sfx: true,   // Terminal cathode sound effects (Web Audio API)
@@ -3213,7 +3213,7 @@ function livelyPropertyListener(name, val) {
     case 'crtScanline': {
       const opacity = (val / 100).toFixed(2);
       document.documentElement.style.setProperty('--crt-scanline-opacity', opacity);
-      const crtEl = document.getElementById('crt-overlay');
+      const crtEl = document.querySelector('.crt-overlay') || document.getElementById('crt-overlay');
       if (crtEl) crtEl.style.opacity = opacity;
       break;
     }
@@ -3235,7 +3235,7 @@ function livelyPropertyListener(name, val) {
     }
     case 'petMode': {
       const enabled = !!val;
-      if (typeof togglePetMode === 'function') togglePetMode(enabled);
+      if (typeof petApply === 'function') petApply(enabled);
       break;
     }
     case 'perfGovernor': {
