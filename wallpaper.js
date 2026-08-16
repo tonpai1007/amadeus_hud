@@ -88,6 +88,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initAudioCanvas();
   initLive2D().then(kurisuGreetOnLoad);
   initTTS();
+  initLivelyWebSocket();
   initWorldLine();
   initBackground();
   startVisualLoop();
@@ -306,6 +307,143 @@ function playTransmitSound() {
     osc.start(now);
     osc.stop(now + 0.09);
   } catch (e) { /* ignore */ }
+}
+
+// --- KURISU VOICE SYNTHESIS & LIP-SYNC AUDIO STREAM ---
+let ttsAudioEl = null;
+let ttsSource = null;
+let ttsAnalyser = null;
+let isSpeakingVoice = false;
+
+function initTTS() {
+  if (ttsAudioEl) return;
+  ttsAudioEl = new Audio();
+  ttsAudioEl.crossOrigin = 'anonymous';
+  ttsAudioEl.addEventListener('ended', () => {
+    isSpeakingVoice = false;
+    if (live2DController) live2DController.isSpeaking = false;
+  });
+  ttsAudioEl.addEventListener('pause', () => {
+    isSpeakingVoice = false;
+    if (live2DController) live2DController.isSpeaking = false;
+  });
+}
+
+async function speakKurisuVoice(text) {
+  if (!SETTINGS || !SETTINGS.voice) return;
+  if (!text || isIdle || isSleeping) return;
+  if (!KURISU_BRAIN.apiKey) return;
+
+  try {
+    const cleanText = text.replace(/[\(\[].*?[\)\]]/g, '').trim();
+    if (!cleanText) return;
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    const res = await fetch(`${KURISU_BRAIN.endpoint}/api/v1/kurisu/tts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${KURISU_BRAIN.apiKey}`,
+      },
+      body: JSON.stringify({ text: cleanText, language: 'en' }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.audio) return;
+
+    if (!ttsAudioEl) initTTS();
+    ttsAudioEl.src = `data:audio/mp3;base64,${data.audio}`;
+
+    // Wire Web Audio analyser for lip-sync mouth opening
+    try {
+      const actx = getAudioContext();
+      if (actx && !ttsSource) {
+        ttsSource = actx.createMediaElementSource(ttsAudioEl);
+        ttsAnalyser = actx.createAnalyser();
+        ttsAnalyser.fftSize = 64;
+        ttsSource.connect(ttsAnalyser);
+        ttsAnalyser.connect(actx.destination);
+      }
+    } catch (e) { /* ignore already connected node */ }
+
+    isSpeakingVoice = true;
+    if (live2DController) live2DController.isSpeaking = true;
+    await ttsAudioEl.play();
+
+    // Real-time lip sync animation loop
+    const pcmData = new Uint8Array(32);
+    function trackLipSync() {
+      if (!isSpeakingVoice) {
+        if (live2DController) live2DController.isSpeaking = false;
+        return;
+      }
+      if (ttsAnalyser) {
+        ttsAnalyser.getByteFrequencyData(pcmData);
+        let sum = 0;
+        for (let i = 0; i < 16; i++) sum += pcmData[i];
+        const amp = Math.min(1.0, (sum / 16) / 128);
+        if (live2DController && live2DController.setLipSync) {
+          live2DController.setLipSync(amp);
+        }
+      }
+      requestAnimationFrame(trackLipSync);
+    }
+    trackLipSync();
+  } catch (err) {
+    console.warn('[Kurisu] Voice synthesis skipped:', err.message);
+    isSpeakingVoice = false;
+    if (live2DController) live2DController.isSpeaking = false;
+  }
+}
+
+// --- LIVE TELEMETRY & OBSIDIAN GRAPH WEBSOCKET ---
+let livelyWS = null;
+let wsReconnectTimer = null;
+
+function initLivelyWebSocket() {
+  if (livelyWS && (livelyWS.readyState === WebSocket.OPEN || livelyWS.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  const wsUrl = `${KURISU_BRAIN.endpoint.replace('http', 'ws')}/api/v1/ws/lively`;
+  try {
+    livelyWS = new WebSocket(wsUrl);
+    livelyWS.onopen = () => {
+      console.log('[Kurisu] Telemetry WebSocket connected to Brain.');
+      setUplink('online', 'UPLINK: BRAIN_LINK');
+    };
+    livelyWS.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.emotion && data.emotion.dominant_emotion) {
+          if (live2DController && !live2DController.isThinking && !isSpeakingVoice) {
+            live2DController.setEmotion(data.emotion.dominant_emotion, 3000);
+          }
+        }
+        if (data.second_brain && data.second_brain.memories && data.second_brain.memories.length > 0) {
+          const mindEl = document.getElementById('wl-mind');
+          if (mindEl) {
+            mindEl.textContent = `MEM: ${data.second_brain.memories[0].substring(0, 14)}...`;
+          }
+        }
+        if (data.system && data.system.active_goals && data.system.active_goals.length > 0) {
+          const goalEl = document.getElementById('news-status');
+          if (goalEl) goalEl.textContent = `GOAL: ${data.system.active_goals[0].substring(0, 14)}`;
+        }
+      } catch (e) { /* ignore JSON parse */ }
+    };
+    livelyWS.onclose = () => {
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = setTimeout(initLivelyWebSocket, 6000);
+    };
+    livelyWS.onerror = () => {
+      try { livelyWS.close(); } catch (e) {}
+    };
+  } catch (err) {
+    wsReconnectTimer = setTimeout(initLivelyWebSocket, 6000);
+  }
 }
 
 // --- SETTINGS PANEL ---
@@ -1470,6 +1608,7 @@ async function kurisuSay(userText) {
   kurisuReplying = false;
   if (live2DController) live2DController.isThinking = false;
   showKurisuBubble(reply.text, 8000);
+  speakKurisuVoice(reply.text);
   // ...and reacts to her own words (Brain supplies an explicit emotion tag).
   // Hold the face ~7s so the reaction is visible before ambient mood resumes.
   if (live2DController && live2DController.setEmotion) {
@@ -1493,6 +1632,7 @@ function kurisuGreetOnLoad() {
   if (!kurisuBubbleEl) return;
   const greetLine = timeAwareGreeting();
   showKurisuBubble(greetLine, 5500);
+  speakKurisuVoice(greetLine);
   appendChatEntry('assistant', greetLine, 'history');
 
   if (!KURISU_BRAIN.apiKey) return;
@@ -1513,6 +1653,7 @@ function kurisuGreetOnLoad() {
       setTimeout(() => {
         if (isIdle || isSleeping || kurisuInput) return;
         showKurisuBubble(reply, 8000);
+        speakKurisuVoice(reply);
         appendChatEntry('assistant', reply, data.emotion ? 'brain' : 'history');
         if (live2DController && live2DController.setEmotion) {
           live2DController.setEmotion(data.emotion || emotionFromText(reply), 7000);
@@ -1558,7 +1699,7 @@ async function kurisuThink() {
 // users who prefer reduced motion (no surprise audio/bubbles).
 function scheduleIdleChatter() {
   if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const delay = (10 + Math.random() * 8) * 60 * 1000; // 10-18 minutes
+  const delay = (2 + Math.random() * 3) * 60 * 1000; // 2-5 minutes autonomous loop
   kurisuIdleChatterTimer = setTimeout(async () => {
     const canSpeak = () => !isIdle && !isSleeping && !kurisuInput && kurisuBubbleEl &&
         !kurisuBubbleEl.classList.contains('visible');
@@ -1585,6 +1726,7 @@ function scheduleIdleChatter() {
       // Re-check: the user may have started typing or the system went idle
       if (canSpeak()) {
         showKurisuBubble(text, 8000);
+        speakKurisuVoice(text);
         appendChatEntry('assistant', text, thought ? 'brain' : 'canned');
         if (live2DController && live2DController.setEmotion) {
           live2DController.setEmotion(emotion, 7000);
