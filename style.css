@@ -1019,15 +1019,15 @@ body.idle #bg-album {
 
 /* --- CHAT TERMINAL (bottom-center) --- */
 .chat-panel {
-  grid-column: 2;
-  grid-row: 2;
-  justify-self: end;
-  align-self: start;
+  position: absolute;
+  right: 20px;
+  bottom: calc(70px + var(--taskbar-clear, 0px));
   width: 420px;
-  max-width: 92vw;
+  max-width: calc(100vw - 40px);
+  z-index: 40;
   cursor: default;
-  /* Smooth fade when idle power-down kicks in */
-  transition: opacity 0.6s ease;
+  /* Smooth fade used by idle power-down */
+  transition: opacity 0.6s ease, transform 0.3s ease;
 }
 
 /* When the system idles the chat folds away completely so the right column

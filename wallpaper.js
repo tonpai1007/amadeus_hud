@@ -3204,3 +3204,53 @@ function startBrowserSimulation() {
   
   simulateAudioLoop();
 }
+
+// --- LIVELY WALLPAPER NATIVE PROPERTY BINDINGS ---
+// Connects Lively Wallpaper native property sliders, toggles, and dropdowns directly
+// to the HUD state.
+function livelyPropertyListener(name, val) {
+  switch (name) {
+    case 'crtScanline': {
+      const opacity = (val / 100).toFixed(2);
+      document.documentElement.style.setProperty('--crt-scanline-opacity', opacity);
+      const crtEl = document.getElementById('crt-overlay');
+      if (crtEl) crtEl.style.opacity = opacity;
+      break;
+    }
+    case 'scopeSpeed': {
+      if (SETTINGS && SETTINGS.scope) {
+        SETTINGS.scope.speed = Math.max(1, Math.min(10, val));
+        saveSettings();
+      }
+      break;
+    }
+    case 'showAudioRing': {
+      const enabled = !!val;
+      document.body.classList.toggle('hide-ring', !enabled);
+      if (SETTINGS && SETTINGS.widgets) {
+        SETTINGS.widgets.ring = enabled;
+        saveSettings();
+      }
+      break;
+    }
+    case 'petMode': {
+      const enabled = !!val;
+      if (typeof togglePetMode === 'function') togglePetMode(enabled);
+      break;
+    }
+    case 'perfGovernor': {
+      if (live2DController && live2DController.setPerfLevel) {
+        live2DController.setPerfLevel(val); // 0=Saver(15fps), 1=Balanced(20fps), 2=High(30fps)
+      }
+      break;
+    }
+    case 'voiceEnabled': {
+      if (SETTINGS) {
+        SETTINGS.voice = !!val;
+        saveSettings();
+      }
+      break;
+    }
+  }
+}
+window.livelyPropertyListener = livelyPropertyListener;
