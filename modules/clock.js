@@ -1,0 +1,59 @@
+// modules/clock.js - AMADEUS Nixie Clock & Taskbar Clearance
+window.AMADEUS = window.AMADEUS || {};
+
+(function() {
+  function applyTaskbarClearance() {
+    let clear = 0;
+    try {
+      clear = window.innerHeight - window.screen.availHeight;
+    } catch (e) { clear = 0; }
+    if (!isFinite(clear) || clear < 0) clear = 0;
+    clear = Math.round(Math.min(clear, 120));
+    document.documentElement.style.setProperty('--taskbar-clear', clear + 'px');
+  }
+
+  function initClock() {
+    const clockEl = document.getElementById('hud-clock');
+    const dateEl = document.getElementById('hud-date');
+    if (!clockEl || !dateEl) return;
+    const tubes = clockEl.querySelectorAll('.clock-tube');
+
+    function update() {
+      const now = new Date();
+      const hrs = String(now.getHours()).padStart(2, '0');
+      const mins = String(now.getMinutes()).padStart(2, '0');
+      const secs = String(now.getSeconds()).padStart(2, '0');
+
+      const time = hrs + mins + secs;
+      tubes.forEach((tube, idx) => {
+        const d = time[idx];
+        if (tube.dataset.digit === d) return;
+        tube.dataset.digit = d;
+        tube.innerText = d;
+        tube.classList.remove('tube-pop');
+        void tube.offsetWidth;
+        tube.classList.add('tube-pop');
+        if (tube._popTimer) clearTimeout(tube._popTimer);
+        tube._popTimer = setTimeout(() => tube.classList.remove('tube-pop'), 400);
+      });
+
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      dateEl.innerText = `${yyyy}.${mm}.${dd}`;
+    }
+
+    update();
+    setInterval(update, 1000);
+  }
+
+  window.addEventListener('resize', applyTaskbarClearance);
+
+  window.AMADEUS.clock = {
+    applyTaskbarClearance,
+    initClock,
+  };
+
+  window.applyTaskbarClearance = applyTaskbarClearance;
+  window.initClock = initClock;
+})();

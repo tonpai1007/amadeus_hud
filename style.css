@@ -36,21 +36,7 @@
 @font-face {
   font-family: 'Orbitron';
   font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('lib/fonts/orbitron.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Orbitron';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url('lib/fonts/orbitron.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Orbitron';
-  font-style: normal;
-  font-weight: 900;
+  font-weight: 100 900;
   font-display: swap;
   src: url('lib/fonts/orbitron.woff2') format('woff2');
 }
@@ -64,21 +50,7 @@
 @font-face {
   font-family: 'Outfit';
   font-style: normal;
-  font-weight: 300;
-  font-display: swap;
-  src: url('lib/fonts/outfit.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Outfit';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('lib/fonts/outfit.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Outfit';
-  font-style: normal;
-  font-weight: 600;
+  font-weight: 100 900;
   font-display: swap;
   src: url('lib/fonts/outfit.woff2') format('woff2');
 }
@@ -317,6 +289,7 @@ body.night-mode {
 
 .bubble-text {
   white-space: pre-wrap;
+  user-select: text;
 }
 
 .bubble-caret {
@@ -1027,14 +1000,25 @@ body.idle #bg-album {
   z-index: 40;
   cursor: default;
   /* Smooth fade used by idle power-down */
-  transition: opacity 0.6s ease, transform 0.3s ease;
+  transition: opacity 0.4s ease, transform 0.3s ease;
 }
 
-/* When the system idles the chat folds away completely so the right column
-   doesn't clutter the sleeping scene; any activity brings it right back. */
+/* When the system idles the chat softly dims but remains immediately clickable on hover/focus */
 body.idle .chat-panel {
-  opacity: 0;
-  pointer-events: none;
+  opacity: 0.4;
+  pointer-events: auto;
+}
+
+body.idle .chat-panel:hover,
+body.idle .chat-panel:focus-within {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+body.idle .hud-panel:hover,
+body.idle .hud-panel:focus-within {
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
 
 .chat-log {
@@ -1045,6 +1029,8 @@ body.idle .chat-panel {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  user-select: text;
+  cursor: auto;
 }
 
 .chat-log::-webkit-scrollbar {
@@ -1095,6 +1081,7 @@ body.idle .chat-panel {
   border-radius: 8px 8px 2px 8px;
   padding: 6px 9px;
   color: var(--text-main);
+  user-select: text;
 }
 
 .chat-entry.assistant .chat-meta {
@@ -1107,6 +1094,7 @@ body.idle .chat-panel {
   border-radius: 8px 8px 8px 2px;
   padding: 6px 9px;
   color: var(--text-main);
+  user-select: text;
 }
 
 /* "…" thinking row while Kurisu is generating a reply */
@@ -1166,6 +1154,7 @@ body.idle .chat-panel {
 .chat-input-row {
   display: flex;
   gap: 8px;
+  align-items: center;
 }
 
 .chat-input {
@@ -1176,8 +1165,12 @@ body.idle .chat-panel {
   background: rgba(8, 10, 18, 0.85);
   border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.3);
   border-radius: 5px;
-  padding: 7px 10px;
+  padding: 8px 10px;
   outline: none;
+  user-select: text;
+  cursor: text;
+  pointer-events: auto;
+  min-height: 34px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -1197,11 +1190,16 @@ body.idle .chat-panel {
   border-radius: 5px;
   padding: 0 14px;
   cursor: pointer;
+  pointer-events: auto;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: opacity 0.2s ease, transform 0.1s ease;
 }
 
 .chat-mic {
-  font-size: 13px;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1210,6 +1208,8 @@ body.idle .chat-panel {
   border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.35);
   border-radius: 5px;
   cursor: pointer;
+  pointer-events: auto;
+  min-height: 34px;
   transition: all 0.2s ease;
   user-select: none;
 }

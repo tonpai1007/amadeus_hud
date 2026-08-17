@@ -12,6 +12,11 @@
   <script src="lib/live2d.min.js"></script>
   <script src="live2d/live2dcubismcore.min.js"></script>
   <script src="lib/pixi-live2d-display.min.js"></script>
+  <!-- Live2D Subsystems -->
+  <script src="modules/l2d-constants.js"></script>
+  <script src="modules/l2d-emotion.js"></script>
+  <script src="modules/l2d-physics.js"></script>
+  <script src="modules/l2d-interaction.js"></script>
   <script src="live2d_controller.js"></script>
 </head>
 <body>
@@ -144,9 +149,9 @@
     <section class="hud-panel settings-panel" id="settings-panel">
       <div class="panel-header settings-header" id="settings-toggle">
         <span class="panel-tag">// SYSTEM_OPTS</span>
-        <span class="pulse-text" id="settings-state">OPEN</span>
+        <span class="pulse-text" id="settings-state">EXPAND</span>
       </div>
-      <div class="settings-body" id="settings-body">
+      <div class="settings-body" id="settings-body" style="display: none;">
         <div class="settings-group">
           <div class="settings-title">DISPLAY</div>
           <label class="setting-row"><span>Oscilloscope</span><input type="checkbox" data-widget="scope" checked></label>
@@ -183,6 +188,22 @@
 
   <script src="openrouter-key.js"></script>
   <script src="brain-key.js"></script>
+  <!-- AMADEUS Modular Subsystems -->
+  <script src="modules/state.js"></script>
+  <script src="modules/sfx.js"></script>
+  <script src="modules/tts.js"></script>
+  <script src="modules/clock.js"></script>
+  <script src="modules/oscilloscope.js"></script>
+  <script src="modules/audio-ring.js"></script>
+  <script src="modules/background.js"></script>
+  <script src="modules/mood.js"></script>
+  <script src="modules/bubble.js"></script>
+  <script src="modules/news.js"></script>
+  <script src="modules/chat.js"></script>
+  <script src="modules/settings.js"></script>
+  <script src="modules/power.js"></script>
+  <script src="modules/uplink.js"></script>
+  <script src="modules/lively.js"></script>
   <script src="wallpaper.js"></script>
 </body>
 </html>
