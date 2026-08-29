@@ -2,13 +2,20 @@
   "name": "amadeus-hud",
   "version": "1.0.0",
   "private": true,
-  "description": "AMADEUS Convergence Sync HUD — wallpaper source has zero runtime deps; these are dev-only build/test tools.",
+  "description": "AMADEUS Convergence Sync HUD \u2014 wallpaper source has zero runtime deps; these are dev-only build/test tools.",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node tests/run-tests.mjs"
+    "test": "node tests/run-tests.mjs",
+    "test:visual": "playwright test",
+    "test:visual:update": "playwright test --update-snapshots",
+    "test:all": "npm run test && npm run test:visual && npm run typecheck",
+    "typecheck": "tsc --noEmit --allowJs --checkJs false"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0"
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^26.4.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^7.0.2"
   }
 }

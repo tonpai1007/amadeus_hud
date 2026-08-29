@@ -186,9 +186,22 @@ window.AMADEUS = window.AMADEUS || {};
           const chosenPool = candidatePools[Math.floor(Math.random() * candidatePools.length)];
           text = chosenPool[Math.floor(Math.random() * chosenPool.length)];
           emotion = s.mood >= 65 ? 'happy' : (isMusic ? 'excited' : 'thinking');
-        }
+                }
         if (canSpeak()) {
-          showKurisuBubble(text, 8000);
+          // Canned template idle lines are NOT conversation: only speak/log
+          // genuine AI thoughts (source 'brain'). When no AI tier is configured
+          // at all, the idle-chatter loop has nothing real to say — keep the
+          // voice quiet and the transcript clean instead of spamming canned
+          // template lines every few minutes.
+          const hasAI = window.AMADEUS.chat && window.AMADEUS.chat.hasAnyAI
+            ? window.AMADEUS.chat.hasAnyAI()
+            : false;
+          const isAIGenerated = !!thought;
+          if (shouldSuppressCannedIdle(isAIGenerated, hasAI)) {
+            if (l2d) l2d.isThinking = false;
+            return;
+          }
+          showKurisuBubble(text, 8000, !isAIGenerated);
           if (window.AMADEUS.chat && window.AMADEUS.chat.appendChatEntry) {
             window.AMADEUS.chat.appendChatEntry('assistant', text, thought ? 'brain' : 'canned');
           }
@@ -207,8 +220,22 @@ window.AMADEUS = window.AMADEUS || {};
    * @property {() => void} showKurisuThinking - Shows the animated "thinking" bubble variant.
    * @property {() => void} hideKurisuBubble - Clears timers and hides the bubble.
    * @property {() => void} scheduleIdleChatter - Schedules self-initiated idle lines (2-5 min) from mood/weather/music-aware pools, or brain-generated thoughts.
-   * @property {() => void} positionKurisuBubble - Re-anchors the bubble to the current avatar position (also used by pet mode dragging).
+      * @property {() => void} positionKurisuBubble - Re-anchors the bubble to the current avatar position (also used by pet mode dragging).
+   * @property {(isAIGenerated: boolean, hasAI: boolean) => boolean} shouldSuppressCannedIdle - True when canned idle lines should be silenced (no AI, no real thought).
    */
+
+  /**
+   * Determines whether a canned (template-driven) idle-chatter line should be
+   * suppressed. Canned lines are not genuine conversation; when no AI tier is
+   * configured they would spam the transcript with scripted text every few minutes.
+   * @param {boolean} isAIGenerated - true when the line is a real brain/LLM output
+   * @param {boolean} hasAI - true when any AI tier (Brain/OpenRouter/Ollama) is configured
+   * @returns {boolean}
+   */
+  function shouldSuppressCannedIdle(isAIGenerated, hasAI) {
+    return !isAIGenerated && !hasAI;
+  }
+
   window.AMADEUS.bubble = {
     initKurisuBubble,
     showKurisuBubble,
@@ -216,5 +243,6 @@ window.AMADEUS = window.AMADEUS || {};
     hideKurisuBubble,
     scheduleIdleChatter,
     positionKurisuBubble,
+    shouldSuppressCannedIdle,
   };
 })();

@@ -514,6 +514,10 @@ window.AMADEUS = window.AMADEUS || {};
     return null;
   }
 
+  function hasAnyAI() {
+    return !!(KURISU_BRAIN.apiKey || KURISU_LLM.apiKey || KURISU_LLM.useOllama);
+  }
+
   /**
    * AMADEUS Kurisu AI cognition & multi-tier chat API.
    * @property {{endpoint: string, timeoutMs: number, apiKey: string}} KURISU_BRAIN - Local FastAPI brain config (memory + emotion tags).
@@ -522,6 +526,7 @@ window.AMADEUS = window.AMADEUS || {};
    * @property {(text: string) => string} cleanReply - Pure: strips model artifacts (emotion/action tags, [labels], assistant prefixes) from an LLM reply.
    * @property {(text: string) => string} emotionFromText - Pure: keyword-maps a reply's wording to a Live2D emotion label.
    * @property {() => string} buildKurisuContext - Composes mood/clock/music/emotion/feed/session state into a system-prompt context block.
+   * @property {() => boolean} hasAnyAI - True when any AI tier (Brain / OpenRouter / Ollama) is configured, so callers can skip canned-only idle chatter.
    * @property {(userText: string) => Promise<{text: string, emotion: string, source: string}>} askKurisu - Full reply pipeline: Brain → OpenRouter → Ollama → canned, with history persistence.
    * @property {() => Promise<void>} triggerScreenCoPilot - Captures the screen and asks the brain for a vision insight.
    * @property {() => Promise<{text: string, emotion: string}|null>} kurisuThink - Generates a spontaneous internal-monologue line; iterates the endpoint config array with per-endpoint timeouts.
@@ -535,6 +540,7 @@ window.AMADEUS = window.AMADEUS || {};
     cleanReply,
     emotionFromText,
     buildKurisuContext,
+    hasAnyAI,
     buildHistoryMessages,
     askKurisu,
     triggerScreenCoPilot,

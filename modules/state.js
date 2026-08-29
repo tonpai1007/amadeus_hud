@@ -88,8 +88,12 @@ window.AMADEUS = window.AMADEUS || {};
   let _masterRafId = null;
 
   function _masterTick(now) {
-    _masterRafId = requestAnimationFrame(_masterTick);
     const callbacks = [..._masterCallbacks];
+    if (callbacks.length === 0) {
+      _masterRafId = null;
+      return;
+    }
+    _masterRafId = requestAnimationFrame(_masterTick);
     for (let i = 0; i < callbacks.length; i++) {
       try { callbacks[i](now); } catch (e) { /* ignore */ }
     }

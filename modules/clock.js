@@ -12,6 +12,8 @@ window.AMADEUS = window.AMADEUS || {};
     document.documentElement.style.setProperty('--taskbar-clear', clear + 'px');
   }
 
+  let _clockInterval = null;
+
   function initClock() {
     const clockEl = document.getElementById('hud-clock');
     const dateEl = document.getElementById('hud-date');
@@ -44,9 +46,16 @@ window.AMADEUS = window.AMADEUS || {};
     }
 
     update();
-    setInterval(update, 1000);
+    _clockInterval = setInterval(update, 1000);
   }
 
+
+  function stopClock() {
+    if (_clockInterval) {
+      clearInterval(_clockInterval);
+      _clockInterval = null;
+    }
+  }
   window.addEventListener('resize', applyTaskbarClearance);
 
   /**
@@ -57,5 +66,6 @@ window.AMADEUS = window.AMADEUS || {};
   window.AMADEUS.clock = {
     applyTaskbarClearance,
     initClock,
+    stopClock,
   };
 })();

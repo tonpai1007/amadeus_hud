@@ -21,6 +21,8 @@ window.AMADEUS = window.AMADEUS || {};
     return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
   }
 
+  let _wlMetaInterval = null;
+
   function initWorldLine() {
     wlCanvas = document.getElementById('world-line-canvas');
     if (!wlCanvas) return;
@@ -36,7 +38,14 @@ window.AMADEUS = window.AMADEUS || {};
     wlResize = resize;
     window.addEventListener('resize', resize);
     resize();
-    setInterval(updateWorldLineMeta, 500);
+    _wlMetaInterval = setInterval(updateWorldLineMeta, 500);
+  }
+
+  function stopWorldLineMeta() {
+    if (_wlMetaInterval) {
+      clearInterval(_wlMetaInterval);
+      _wlMetaInterval = null;
+    }
   }
 
   function drawScopeGraticule(w, h) {
@@ -285,6 +294,7 @@ window.AMADEUS = window.AMADEUS || {};
     initWorldLine,
     updateWorldLine,
     updateWorldLineMeta,
+    stopWorldLineMeta,
     getResizeCallback: () => wlResize,
     hexToRgb,
   };

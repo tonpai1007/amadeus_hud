@@ -558,7 +558,12 @@ test('smoke: all source JS files compile without syntax errors', () => {
     for (const f of fs.readdirSync(path.join(ROOT, dir))) {
       if (!f.endsWith('.js')) continue;
       const full = path.join(ROOT, dir, f);
-      if (fs.statSync(full).isFile()) files.push(full);
+      if (!fs.statSync(full).isFile()) continue;
+      // Skip Node/ESM tooling (playwright.config.js, etc.): these are parsed by
+      // Node's module system, not the browser classic-script loader this guard
+      // protects. Detect top-level ESM import/export statements.
+      if (/^\s*(import\s|export\s)/m.test(fs.readFileSync(full, 'utf8'))) continue;
+      files.push(full);
     }
   }
   assert.ok(files.length >= 20, `expected to scan real sources, found ${files.length}`);
@@ -786,4 +791,155 @@ test('power governor skips auto-adjust while perfLevelManual is set', () => {
   now = Date.now();
   for (let i = 0; i < 8; i++) { now += 1500; ticks[0](now); }
   assert.equal(A.getPerfLevel(), 0, 'governor should downgrade to min on sustained low FPS');
+});
+
+// ---------------------------------------------------------------------------
+// Memory-leak prevention: timer/RAF cleanup
+// ---------------------------------------------------------------------------
+
+test('clock.initClock starts a 1s interval and stopClock clears it', () => {
+  const { sandbox, storage } = makeSandbox();
+  const timers = [];
+  let timerIdCounter = 1;
+  sandbox.setInterval = (fn, ms) => { const id = timerIdCounter++; timers[id] = fn; return id; };
+  sandbox.clearInterval = (id) => { timers[id] = null; };
+
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('clock.js'));
+  const clock = sandbox.window.AMADEUS.clock;
+
+  // Stub DOM elements
+  sandbox.document.getElementById = (id) => {
+    if (id === 'hud-clock') {
+      return {
+        querySelectorAll: () => [{ dataset: {}, classList: { remove() {}, add() {} }, innerText: '' }],
+        classList: { remove() {}, add() {} },
+      };
+    }
+    if (id === 'hud-date') return { innerText: '' };
+    return null;
+  };
+
+  clock.initClock();
+  const clockTimerIds = Object.keys(timers).map(Number);
+  assert.ok(clockTimerIds.length > 0, 'initClock should schedule an interval');
+  const clockTimerId = clockTimerIds[0];
+  clock.stopClock();
+  assert.equal(timers[clockTimerId], null, 'stopClock should clear the interval');
+});
+
+test('oscilloscope.initWorldLine starts a 500ms meta interval and stopWorldLineMeta clears it', () => {
+  const { sandbox, storage } = makeSandbox();
+  const timers = [];
+  let timerIdCounter = 1;
+  sandbox.setInterval = (fn, ms) => { const id = timerIdCounter++; timers[id] = fn; return id; };
+  sandbox.clearInterval = (id) => { timers[id] = null; };
+
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('oscilloscope.js'));
+  const osc = sandbox.window.AMADEUS.oscilloscope;
+
+  // Stub DOM elements
+  sandbox.document.getElementById = (id) => {
+    if (id === 'world-line-canvas') {
+      return {
+        getContext: () => ({
+          fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+          fillText() {}, setLineDash() {}, createLinearGradient: () => ({ addColorStop() {} }),
+          shadowBlur: 0, shadowColor: '', lineWidth: 1, fillStyle: '', strokeStyle: '',
+        }),
+        getBoundingClientRect: () => ({ width: 380, height: 160 }),
+        classList: { add() {}, remove() {} },
+        width: 380, height: 160,
+      };
+    }
+    if (id === 'wl-audio' || id === 'wl-mind') return { innerText: '' };
+    return null;
+  };
+  sandbox.window.AMADEUS.PERF = { dpr: 1 };
+  sandbox.window.AMADEUS.PERF_LEVELS = [{ scopeStep: 2 }];
+  sandbox.window.AMADEUS.getPerfLevel = () => 2;
+  sandbox.window.AMADEUS.SETTINGS_DEFAULTS = { scope: { ch1: '#ff4d55', ch2: '#ff55aa' } };
+  sandbox.window.AMADEUS.SETTINGS = { scope: { ch1: '#ff4d55', ch2: '#ff55aa' } };
+  sandbox.window.AMADEUS.state = {
+    isLivelyPaused: false, isIdle: false, lastAudioLevel: 0, mindEnergy: 0.3,
+    audioEnv: 0, smoothSpec: new Array(48).fill(0), peakSpec: new Array(48).fill(0),
+    peakFalloff: 0.86, lastSpectrum: new Array(48).fill(0), wlPhase2: 0, mindBaseline: 0,
+    live2DController: null,
+  };
+
+  osc.initWorldLine();
+  const oscTimerIds = Object.keys(timers).map(Number);
+  assert.ok(oscTimerIds.length > 0, 'initWorldLine should schedule a meta interval');
+  const oscTimerId = oscTimerIds[0];
+  osc.stopWorldLineMeta();
+  assert.equal(timers[oscTimerId], null, 'stopWorldLineMeta should clear the interval');
+});
+
+test('power.startIdleWatchdog guards against double-start and stopIdleWatchdog clears it', () => {
+  const { sandbox, storage } = makeSandbox();
+  const timers = [];
+  let timerIdCounter = 1;
+  sandbox.setInterval = (fn, ms) => { const id = timerIdCounter++; timers[id] = fn; return id; };
+  sandbox.clearInterval = (id) => { timers[id] = null; };
+  sandbox.performance = { now: () => Date.now() };
+
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('power.js'));
+  const power = sandbox.window.AMADEUS.power;
+  const s = sandbox.window.AMADEUS.state;
+
+  s.lastActivityTime = Date.now();
+  power.startIdleWatchdog();
+  const timerIds = Object.keys(timers).map(Number);
+  assert.ok(timerIds.length > 0, 'first startIdleWatchdog should schedule an interval');
+  const firstId = timerIds[0];
+
+  power.startIdleWatchdog();
+  const secondIds = Object.keys(timers).map(Number);
+  assert.equal(secondIds.length, 1, 'second startIdleWatchdog must not create a duplicate interval');
+
+  power.stopIdleWatchdog();
+  assert.equal(timers[firstId], null, 'stopIdleWatchdog should clear the interval');
+});
+
+test('state master ticker stops RAF when all callbacks are removed', () => {
+  const { sandbox, storage } = makeSandbox();
+  const rafs = [];
+  sandbox.requestAnimationFrame = (cb) => { rafs.push(cb); return rafs.length - 1; };
+  sandbox.cancelAnimationFrame = (id) => { rafs[id] = null; };
+
+  loadModule(sandbox, MOD('state.js'));
+  const A = sandbox.window.AMADEUS;
+
+  const cb = () => {};
+  A.onMasterTick(cb);
+  assert.ok(rafs[0], 'onMasterTick should start RAF');
+
+  A.offMasterTick(cb);
+  // Simulate one RAF frame to let the ticker notice empty callbacks
+  if (rafs[0]) rafs[0](Date.now());
+  assert.equal(rafs.length, 1, 'no additional RAF should be scheduled after callbacks empty');
+});
+
+// ---------------------------------------------------------------------------
+// bubble.js — shouldSuppressCannedIdle gating
+// ---------------------------------------------------------------------------
+
+test('bubble.shouldSuppressCannedIdle silences canned chatter when no AI is configured', () => {
+  const { sandbox } = makeSandbox();
+  loadModule(sandbox, MOD('bubble.js'));
+  const { shouldSuppressCannedIdle } = sandbox.window.AMADEUS.bubble;
+
+  // No AI configured + canned (non-AI) line → suppress (keep transcript clean)
+  assert.equal(shouldSuppressCannedIdle(false, false), true,
+    'canned idle line should be suppressed when no AI tier is configured');
+  // Real AI thought → never suppress
+  assert.equal(shouldSuppressCannedIdle(true, false), false,
+    'a genuine brain/LLM thought should never be suppressed');
+  assert.equal(shouldSuppressCannedIdle(true, true), false,
+    'a genuine brain/LLM thought should never be suppressed even with AI configured');
+  // AI configured + canned fallback → allow (AI is present, so canned backup is valid)
+  assert.equal(shouldSuppressCannedIdle(false, true), false,
+    'canned fallback should be allowed when an AI tier is configured');
 });

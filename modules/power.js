@@ -16,6 +16,7 @@ window.AMADEUS = window.AMADEUS || {};
   let debugOverlayRowsEl = null;
   let debugOverlayTimer = null;
   let debugZoneEl = null;
+  let _idleWatchdogInterval = null;
 
   function markActivity() {
     const s = window.AMADEUS.state;
@@ -28,7 +29,8 @@ window.AMADEUS = window.AMADEUS || {};
   }
 
   function startIdleWatchdog() {
-    setInterval(() => {
+    if (_idleWatchdogInterval) return; // guard: already running
+    _idleWatchdogInterval = setInterval(() => {
       const s = window.AMADEUS.state;
       if (s.isLivelyPaused) return;
       const l2d = s.live2DController;
@@ -43,6 +45,13 @@ window.AMADEUS = window.AMADEUS || {};
         enterSleepState(true);
       }
     }, 2000);
+  }
+
+  function stopIdleWatchdog() {
+    if (_idleWatchdogInterval) {
+      clearInterval(_idleWatchdogInterval);
+      _idleWatchdogInterval = null;
+    }
   }
 
   function enterSleepState(sleep) {
@@ -262,6 +271,7 @@ window.AMADEUS = window.AMADEUS || {};
   window.AMADEUS.power = {
     markActivity,
     startIdleWatchdog,
+    stopIdleWatchdog,
     enterIdleState,
     enterSleepState,
     onUserAway,
