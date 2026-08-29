@@ -10,6 +10,7 @@ window.AMADEUS = window.AMADEUS || {};
   let _rafLast = performance.now();
   let _highStreak = 0;
   let _governorActive = false;
+  let _lastMeasuredFps = 0;
 
   let debugOverlayEl = null;
   let debugOverlayRowsEl = null;
@@ -139,21 +140,22 @@ window.AMADEUS = window.AMADEUS || {};
   function startPerfGovernor() {
     if (_governorActive) return;
     _governorActive = true;
-    const probe = () => {
+
+    window.AMADEUS.onMasterTick((now) => {
       const s = window.AMADEUS.state;
-      if (s.isLivelyPaused || s.isIdle) {
+      if (s.isLivelyPaused || s.isIdle || s.perfLevelManual) {
         _rafFrames = 0;
         _rafLast = performance.now();
-        requestAnimationFrame(probe);
+        _highStreak = 0;
         return;
       }
       _rafFrames++;
-      const now = performance.now();
       const dt = now - _rafLast;
       if (dt >= 1500) {
         const fps = Math.round((_rafFrames * 1000) / dt);
         _rafFrames = 0;
         _rafLast = now;
+        _lastMeasuredFps = fps;
         let lvl = window.AMADEUS.getPerfLevel();
         if (fps < 18 && lvl > 0) {
           window.AMADEUS.setPerfLevel(lvl - 1);
@@ -170,10 +172,10 @@ window.AMADEUS = window.AMADEUS || {};
           _highStreak = 0;
         }
       }
-      requestAnimationFrame(probe);
-    };
-    requestAnimationFrame(probe);
+    });
   }
+
+  function getLastMeasuredFps() { return _lastMeasuredFps; }
 
   function applyTimeOfDay() {
     const hour = new Date().getHours();
@@ -190,7 +192,7 @@ window.AMADEUS = window.AMADEUS || {};
     debugOverlayRowsEl = document.getElementById('l2d-debug-rows');
     debugZoneEl = document.getElementById('l2d-debug-zone');
     window.addEventListener('keydown', (e) => {
-      if (e.ctrlKey && e.shiftKey && (e.code === 'KeyD' || e.code === 'KeyE')) {
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyD') {
         e.preventDefault();
         toggleDebugOverlay();
       }
@@ -216,25 +218,17 @@ window.AMADEUS = window.AMADEUS || {};
     const l2d = window.AMADEUS.state && window.AMADEUS.state.live2DController;
     if (!l2d || !l2d.debugState) return;
     const s = l2d.debugState();
-    const p = s.params || {};
     const num = (v, d = '—') => (v === null || v === undefined) ? d : v;
+    const perfLvl = window.AMADEUS.getPerfLevel ? window.AMADEUS.getPerfLevel() : '—';
+    const fps = _lastMeasuredFps || '—';
     const rows = [
+      ['fps', fps],
+      ['perf_lvl', perfLvl],
       ['emotion', s.emotion],
       ['mood', `${s.mood}/100`],
-      ['time', `${s.hour}:00 · ${s.night ? 'night' : 'day'}`],
       ['proximity', num(s.proximity)],
       ['pupil', num(s.pupil)],
       ['blink', `${s.blinkPhase} ${num(s.blinkValue)}`],
-      ['sleep', s.sleep],
-      ['gestureArm', s.gestureArm ? 'on' : 'off'],
-      ['egg', s.egg],
-      ['param pupil', num(p.pupil)],
-      ['param eyeOpen', num(p.eyeOpen)],
-      ['param tongue/rage', `${num(p.tongue)} / ${num(p.rage)}`],
-      ['param smile/sad', `${num(p.smile)} / ${num(p.sad)}`],
-      ['param angry/surp/scared', `${num(p.angry)} / ${num(p.surprised)} / ${num(p.scared)}`],
-      ['param bodyZ/X', `${num(p.bodyAngleZ)} / ${num(p.bodyAngleX)}`],
-      ['param headZ/hands', `${num(p.headAngleZ)} / ${num(p.hands)}`],
     ];
     debugOverlayRowsEl.innerHTML = rows
       .map(([label, value]) => `<div class="l2d-debug-row"><span>${label}</span><span class="l2d-debug-val">${value}</span></div>`)
@@ -249,6 +243,22 @@ window.AMADEUS = window.AMADEUS || {};
     }
   }
 
+  /**
+   * AMADEUS power management: idle/sleep watchdog, adaptive perf governor,
+   * time-of-day ambience and the L2D debug overlay.
+   * @property {(delta?: number) => void} markActivity - Registers user activity (resets idle/sleep timers, drifts mood).
+   * @property {() => void} startIdleWatchdog - Starts the 2s polling watchdog that drives idle (8s) and sleep (20min) transitions.
+   * @property {(idle: boolean) => void} enterIdleState - Forces the HUD idle power-saving state on/off.
+   * @property {(sleep: boolean) => void} enterSleepState - Puts Kurisu to sleep / wakes her with a greeting line.
+   * @property {() => void} onUserAway - Focus lost / Lively paused / lock handler (peek choreography entry).
+   * @property {() => void} onUserReturn - Focus regained handler (peek reaction + wake).
+   * @property {() => void} applyPerfLevel - Applies the current PERF_LEVELS entry (DPR, fps caps) to subsystems.
+   * @property {() => void} startPerfGovernor - Samples master-tick FPS and auto-downgrades/upgrades the perf level.
+   * @property {() => void} applyTimeOfDay - Toggles dawn/day/dusk/night body classes from the local hour.
+   * @property {() => void} initDebugOverlay - Registers the Ctrl+Shift+D debug inspector toggle.
+   * @property {() => number} getLastMeasuredFps - Last FPS measured by the governor.
+   * @property {number} ACTIVITY_ENERGY - Audio energy threshold that counts as user activity.
+   */
   window.AMADEUS.power = {
     markActivity,
     startIdleWatchdog,
@@ -260,16 +270,7 @@ window.AMADEUS = window.AMADEUS || {};
     startPerfGovernor,
     applyTimeOfDay,
     initDebugOverlay,
+    getLastMeasuredFps,
     ACTIVITY_ENERGY,
   };
-
-  window.markActivity = markActivity;
-  window.startIdleWatchdog = startIdleWatchdog;
-  window.enterIdleState = enterIdleState;
-  window.enterSleepState = enterSleepState;
-  window.onUserAway = onUserAway;
-  window.onUserReturn = onUserReturn;
-  window.startPerfGovernor = startPerfGovernor;
-  window.applyTimeOfDay = applyTimeOfDay;
-  window.initDebugOverlay = initDebugOverlay;
 })();

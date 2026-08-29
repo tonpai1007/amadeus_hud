@@ -148,6 +148,17 @@ window.AMADEUS = window.AMADEUS || {};
     }, STORAGE_DEBOUNCE_MS);
   }
 
+  /**
+   * AMADEUS persistent mood memory & emotion-reactive HUD tinting.
+   * @property {() => void} loadMood - Restores the persisted mood (0-100) and syncs it to the Live2D controller.
+   * @property {() => void} saveMood - Persists the mood via the debounced storage writer.
+   * @property {(delta: number) => void} adjustMood - Nudges the mood (clamped 5-95) and persists it.
+   * @property {() => void} driftMood - Slowly pulls the mood back toward neutral (called from markActivity).
+   * @property {() => void} updateEmotionTint - Blends the HUD accent CSS vars toward the current emotion hue (call per visual tick).
+   * @property {(emotion: string) => number} moodDeltaForEmotion - Pure: mood delta associated with an emotion label.
+   * @property {(key: string, fn: Function) => void} scheduleStorageWrite - Debounced localStorage write helper (600ms, per key).
+   * @property {() => void} writeMood - Immediate mood write (used by the debouncer and pagehide flush).
+   */
   window.AMADEUS.mood = {
     loadMood,
     saveMood,
@@ -158,12 +169,4 @@ window.AMADEUS = window.AMADEUS || {};
     scheduleStorageWrite,
     writeMood,
   };
-
-  window.loadMood = loadMood;
-  window.saveMood = saveMood;
-  window.adjustMood = adjustMood;
-  window.driftMood = driftMood;
-  window.updateEmotionTint = updateEmotionTint;
-  window.moodDeltaForEmotion = moodDeltaForEmotion;
-  window.scheduleStorageWrite = scheduleStorageWrite;
 })();

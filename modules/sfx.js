@@ -78,6 +78,15 @@ window.AMADEUS = window.AMADEUS || {};
     } catch (e) { /* ignore */ }
   }
 
+  /**
+   * AMADEUS Web Audio SFX synthesizer (UI clicks, beeps, transmit chirps).
+   * @property {() => AudioContext|null} getAudioContext - Lazily creates/resumes the shared AudioContext.
+   * @property {() => void} playClickSound - Short triangle-wave click (settings interactions).
+   * @property {() => void} playBeepSound - Square-wave double beep (toggles, pet mode).
+   * @property {() => void} playTransmitSound - Sine chirp on message send.
+   * @property {(v: boolean) => void} setSfxEnabled - Master SFX switch (settings panel).
+   * @property {() => boolean} isSfxEnabled - Current SFX switch state.
+   */
   window.AMADEUS.sfx = {
     getAudioContext,
     playClickSound,
@@ -86,10 +95,4 @@ window.AMADEUS = window.AMADEUS || {};
     setSfxEnabled: (v) => { sfxEnabled = !!v; },
     isSfxEnabled: () => sfxEnabled,
   };
-
-  // Global aliases
-  window.getAudioContext = getAudioContext;
-  window.playClickSound = playClickSound;
-  window.playBeepSound = playBeepSound;
-  window.playTransmitSound = playTransmitSound;
 })();

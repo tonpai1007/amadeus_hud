@@ -11,6 +11,9 @@ window.AMADEUS = window.AMADEUS || {};
     thinking: 0.76, angry: 0.80, excited: 0.86, surprised: 0.92,
   };
 
+  const DASH_SCOPE = Object.freeze([3, 3]);
+  const DASH_EMPTY = Object.freeze([]);
+
   function hexToRgb(hex) {
     const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m) return null;
@@ -244,14 +247,14 @@ window.AMADEUS = window.AMADEUS || {};
     wlCtx.fillRect(sx, 0, 1, h);
 
     const triggerY = h * 0.22 + s.mindBaseline * 8 - mindAmp * mind;
-    wlCtx.setLineDash([3, 3]);
+    wlCtx.setLineDash(DASH_SCOPE);
     wlCtx.strokeStyle = `rgba(255, 85, 170, ${0.25 + mind * 0.4})`;
     wlCtx.lineWidth = 1;
     wlCtx.beginPath();
     wlCtx.moveTo(8, triggerY);
     wlCtx.lineTo(w - 20, triggerY);
     wlCtx.stroke();
-    wlCtx.setLineDash([]);
+    wlCtx.setLineDash(DASH_EMPTY);
 
     wlCtx.font = '9px "Share Tech Mono", monospace';
     wlCtx.textBaseline = 'top';
@@ -270,6 +273,14 @@ window.AMADEUS = window.AMADEUS || {};
     if (mindEl) mindEl.innerText = 'MIND ' + Math.round(s.mindEnergy * 100) + '%';
   }
 
+  /**
+   * AMADEUS phosphor oscilloscope & cognitive waveform.
+   * @property {() => void} initWorldLine - Binds #world-line-canvas, sizes it and starts the 500ms meta readout interval.
+   * @property {() => void} updateWorldLine - Draws one phosphor frame (audio trace + mind trace + graticule); called from the master visual tick.
+   * @property {() => void} updateWorldLineMeta - Updates the SIG/MIND text readouts.
+   * @property {() => Function|null} getResizeCallback - Resize handler for registry re-attachment.
+   * @property {(hex: string) => {r: number, g: number, b: number}|null} hexToRgb - Pure: parses "#rrggbb" into an RGB triplet, null on malformed input.
+   */
   window.AMADEUS.oscilloscope = {
     initWorldLine,
     updateWorldLine,
@@ -277,9 +288,4 @@ window.AMADEUS = window.AMADEUS || {};
     getResizeCallback: () => wlResize,
     hexToRgb,
   };
-
-  window.initWorldLine = initWorldLine;
-  window.updateWorldLine = updateWorldLine;
-  window.updateWorldLineMeta = updateWorldLineMeta;
-  window.hexToRgb = hexToRgb;
 })();

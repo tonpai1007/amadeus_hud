@@ -8,9 +8,11 @@ window.AMADEUS = window.AMADEUS || {};
   let ringSpinAngle = 0;
   let gearSnapshot = null;
   let gearAngle = 0;
-  let lastGearUpdate = 0;
-  let lastVisualUpdate = 0;
   let audioResize = null;
+  let lastGearUpdate = 0;
+  const DASH_RING_A = Object.freeze([2, 14]);
+  const DASH_RING_B = Object.freeze([18, 6]);
+  const DASH_EMPTY = Object.freeze([]);
 
   function initAudioCanvas() {
     audioCanvas = document.getElementById('audio-canvas');
@@ -349,26 +351,31 @@ window.AMADEUS = window.AMADEUS || {};
     const spin = now * 0.00015;
     ctx.save();
     ctx.lineWidth = 1.5;
-    ctx.setLineDash([2, 14]);
+    ctx.setLineDash(DASH_RING_A);
     ctx.strokeStyle = `rgba(255, 77, 85, ${(0.05 + bassAvg * 0.18).toFixed(3)})`;
     ctx.beginPath();
     ctx.arc(cx, cy, haloR, spin, spin + Math.PI * 2);
     ctx.stroke();
-    ctx.setLineDash([18, 6]);
+    ctx.setLineDash(DASH_RING_B);
     ctx.strokeStyle = `rgba(255, 85, 170, ${(0.04 + bassAvg * 0.14).toFixed(3)})`;
     ctx.beginPath();
     ctx.arc(cx, cy, haloR * 0.9, -spin * 1.6, -spin * 1.6 + Math.PI * 2);
     ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.setLineDash(DASH_EMPTY);
     ctx.restore();
   }
 
+  /**
+   * AMADEUS audio visualizer ring & clockwork gears.
+   * @property {() => void} initAudioCanvas - Binds the #audio-canvas, sizes it to the window and (re)builds the static/spin ring offscreen layers.
+   * @property {(now: number) => void} drawAudioRing - Draws one frame of the spectrum ring, gears, cursor lens and bass halos.
+   * @property {(freq: number) => {r: number, g: number, b: number}} freqColor - Pure: maps a normalized frequency (0..1) to a crimson→violet→pink gradient RGB triplet.
+   * @property {() => Function|null} getResizeCallback - Returns the resize handler for registry-based re-attachment.
+   */
   window.AMADEUS.audioRing = {
     initAudioCanvas,
     drawAudioRing,
+    freqColor,
     getResizeCallback: () => audioResize,
   };
-
-  window.initAudioCanvas = initAudioCanvas;
-  window.drawAudioRing = drawAudioRing;
 })();

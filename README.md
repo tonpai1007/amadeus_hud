@@ -49,18 +49,42 @@ Kurisu's replies use the first available tier, in order:
    ```js
    window.KURISU_BRAIN_KEY = 'your_key_here';
    ```
-   The endpoint defaults to `http://127.0.0.1:8000` (see `KURISU_BRAIN` in `wallpaper.js`).
+   The endpoint defaults to `http://127.0.0.1:8000` (see `KURISU_BRAIN` in `modules/chat-api.js`).
 2. **OpenRouter** (cloud, fast, no local GPU cost). Set your key in `openrouter-key.js`:
    ```js
    window.KURISU_OPENROUTER_KEY = 'sk-or-v1-...';
    ```
    Free keys: <https://openrouter.ai/keys>.
-3. **Ollama** (local, offline). Starts automatically if the server is up at `http://localhost:11434`.
+3. **Ollama** (local, offline). Disabled by default to save RAM — flip `useOllama` to `true` in `modules/chat-api.js` to enable a fallback server at `http://localhost:11434`.
 4. **Canned replies** — offline Steins;Gate-flavored fallback pool.
 
 > **Mood-aware brain context:** every reply to tiers 0–3 appends a live `[Current state]` block to the system prompt — her persistent mood, time of day, music energy, live emotion, today's top story, and desk-session length — so the brain answers in character with her actual disposition instead of a static persona (`buildKurisuContext()` in `wallpaper.js`).
 
-> **Security:** `openrouter-key.js` and `brain-key.js` are gitignored. Never commit real API keys.
+> **Security:** `openrouter-key.js` and `brain-key.js` are gitignored and untracked — never commit real API keys. The brain key gates a localhost-only API; change it from any default value before ever exposing the brain server beyond `127.0.0.1`.
+
+## Architecture
+
+Vanilla JS with no build step. `index.html` loads ~30 small modules that communicate through the `window.AMADEUS` namespace (no stray globals — the only top-level `window.*` exports are the four `lively*Listener` callbacks required by Lively's C# host):
+
+- `modules/state.js` — shared runtime state, perf profiles, the `brainClient` URL/key helper, and the single master `requestAnimationFrame` ticker that all visual subsystems subscribe to (`AMADEUS.onMasterTick`). Also provides `createWsHeartbeat` for keep-alive/staleness detection on the WebSocket clients.
+- `modules/chat-history.js` / `chat-api.js` / `chat-ui.js` / `speech-input.js` — chat split by concern: persistence, API tiers (Brain → OpenRouter → Ollama → canned) + spontaneous thoughts, input handling, and push-to-talk STT.
+- `modules/power.js` — idle/sleep watchdog, adaptive performance governor, debug overlay (`Ctrl+Shift+D`), time-of-day ambience.
+- `modules/uplink.js` / `modules/lively.js` — WebSocket telemetry clients to the AMADEUS Brain server, with pings + staleness-based reconnect.
+- `wallpaper.js` — orchestrator: module init, phase-scheduled visual loop, Lively bootstrap/fallback, and an interval registry for cleanup.
+
+Settings persist to `localStorage`; Lively-native settings come from `LivelyProperties.json` and are validated in `modules/lively.js`.
+
+## Build & Test
+
+Dev tooling is Node-only (`npm install` once; the wallpaper itself has zero runtime dependencies):
+
+```sh
+npm install        # installs esbuild (dev-only)
+npm test           # 17 unit tests for the pure functions (node:test, no deps)
+npm run build      # minified release copy in dist/
+```
+
+`npm run build` produces a self-contained `dist/` you can zip or point Lively at directly: same relative paths, all first-party JS/CSS minified (~44% smaller), vendor bundles and Live2D assets copied verbatim. **Secrets never ship** — `brain-key.js` / `openrouter-key.js` are excluded and their `<script>` tags stripped; the chat tier degrades gracefully without them.
 
 ## Interactions
 

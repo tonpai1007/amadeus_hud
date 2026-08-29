@@ -83,11 +83,14 @@ window.AMADEUS = window.AMADEUS || {};
     cheek: 'PARAM_CHEEK',
   };
 
+  /**
+    * AMADEUS Live2D constants: emotion→aura color table and Cubism 2/4
+    * parameter-name maps shared by the controller subsystems.
+    */
   window.AMADEUS.L2D_CONSTANTS = {
     EMOTION_AURA,
     PARAM_MAP_CUBISM4,
     PARAM_MAP_CUBISM2,
+    MAX_DPR: 1.5,
   };
-
-  window.EMOTION_AURA = EMOTION_AURA;
 })();

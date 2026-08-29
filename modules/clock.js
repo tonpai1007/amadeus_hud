@@ -49,11 +49,13 @@ window.AMADEUS = window.AMADEUS || {};
 
   window.addEventListener('resize', applyTaskbarClearance);
 
+  /**
+   * AMADEUS nixie clock & taskbar clearance.
+   * @property {() => void} applyTaskbarClearance - Sets --taskbar-clear from the window/screen height delta (Lively taskbar overlap).
+   * @property {() => void} initClock - Starts the 1s HH:MM:SS nixie update with digit-flip pop animation.
+   */
   window.AMADEUS.clock = {
     applyTaskbarClearance,
     initClock,
   };
-
-  window.applyTaskbarClearance = applyTaskbarClearance;
-  window.initClock = initClock;
 })();

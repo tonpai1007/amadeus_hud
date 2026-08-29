@@ -9,9 +9,8 @@ window.AMADEUS = window.AMADEUS || {};
   // --- LIVE2D CONTROLLER BOOTSTRAP ---
   async function initLive2D() {
     console.log("[L2D] Starting Live2D Controller setup...");
-    const l2d = new Live2DController('live2d-canvas', 'live2d/kurisu/Kurisu.model3.json');
+    const l2d = new (window.AMADEUS.Live2DController || Live2DController)('live2d-canvas', 'live2d/kurisu/Kurisu.model3.json');
     window.AMADEUS.state.live2DController = l2d;
-    window.live2DController = l2d;
 
     if (window.AMADEUS.settings && window.AMADEUS.settings.pushFeaturesToController) {
       window.AMADEUS.settings.pushFeaturesToController();
@@ -39,22 +38,30 @@ window.AMADEUS = window.AMADEUS || {};
     return success;
   }
 
-  // --- SINGLE PHASE-LOCKED VISUAL LOOP ---
+  // --- SINGLE PHASE-LOCKED VISUAL LOOP WITH PHASE SCHEDULE ---
   function startVisualLoop() {
     lastVisualTick = 0;
-    requestAnimationFrame(visualLoopTick);
+    window.AMADEUS.onMasterTick(visualLoopTick);
   }
 
   function visualLoopTick(now) {
-    requestAnimationFrame(visualLoopTick);
-    const interval = 1000 / window.AMADEUS.PERF.visualFps;
+    const interval = 1000 / (window.AMADEUS.PERF ? window.AMADEUS.PERF.visualFps : 30);
     if (now - lastVisualTick < interval) return;
     lastVisualTick = now - ((now - lastVisualTick) % interval);
 
+    const s = window.AMADEUS.state;
+    if (s && s.isLivelyPaused) return;
+
+    // Phase 0: Core Visual Telemetry & Background Render
     if (window.AMADEUS.oscilloscope) window.AMADEUS.oscilloscope.updateWorldLine();
     if (window.AMADEUS.background) window.AMADEUS.background.updateBackground();
 
-    const s = window.AMADEUS.state;
+    // Phase 1: Holographic Nixie Tube Divergence Meter
+    if (window.AMADEUS.divergence && window.AMADEUS.divergence.renderDivergence) {
+      window.AMADEUS.divergence.renderDivergence(now);
+    }
+
+    // Phase 2: Affective Emotion & Lighting Shader Tint
     if (s && !s.isIdle && !s.isLivelyPaused && window.AMADEUS.mood) {
       window.AMADEUS.mood.updateEmotionTint();
     }
@@ -75,6 +82,56 @@ window.AMADEUS = window.AMADEUS || {};
   }
   window.addEventListener('pagehide', flushStorage);
 
+  // Tear down WebSocket uplinks on unload so no reconnect loop keeps firing
+  // while the webview is being discarded.
+  window.addEventListener('pagehide', () => {
+    if (window.AMADEUS.uplink && window.AMADEUS.uplink.close) window.AMADEUS.uplink.close();
+    if (window.AMADEUS.lively && window.AMADEUS.lively.closeTelemetryWebSocket) {
+      window.AMADEUS.lively.closeTelemetryWebSocket();
+    }
+  });
+
+  // --- INTERVAL REGISTRY FOR CLEANUP ---
+  const _intervalIds = new Set();
+  const originalSetInterval = window.setInterval;
+  window.setInterval = function(fn, ms, ...args) {
+    const id = originalSetInterval(fn, ms, ...args);
+    _intervalIds.add(id);
+    return id;
+  };
+  const originalClearInterval = window.clearInterval;
+  window.clearInterval = function(id) {
+    _intervalIds.delete(id);
+    return originalClearInterval(id);
+  };
+  window.addEventListener('pagehide', () => {
+    _intervalIds.forEach(id => originalClearInterval(id));
+    _intervalIds.clear();
+  });
+
+  // --- MODULE HEALTH VALIDATION ---
+  function validateModules() {
+    const required = [
+      ['AMADEUS.state', window.AMADEUS && window.AMADEUS.state],
+      ['AMADEUS.chat', window.AMADEUS && window.AMADEUS.chat],
+      ['AMADEUS.settings', window.AMADEUS && window.AMADEUS.settings],
+      ['AMADEUS.power', window.AMADEUS && window.AMADEUS.power],
+      ['AMADEUS.clock', window.AMADEUS && window.AMADEUS.clock],
+      ['AMADEUS.bubble', window.AMADEUS && window.AMADEUS.bubble],
+      ['AMADEUS.tts', window.AMADEUS && window.AMADEUS.tts],
+      ['AMADEUS.news', window.AMADEUS && window.AMADEUS.news],
+      ['AMADEUS.mood', window.AMADEUS && window.AMADEUS.mood],
+      ['AMADEUS.uplink', window.AMADEUS && window.AMADEUS.uplink],
+      ['AMADEUS.brainClient', window.AMADEUS && window.AMADEUS.brainClient],
+    ];
+    const missing = required.filter(([, val]) => !val).map(([name]) => name);
+    if (missing.length > 0) {
+      console.warn('[AMADEUS] Missing modules:', missing.join(', '));
+    } else {
+      console.log('[AMADEUS] All modules loaded.');
+    }
+  }
+
   // --- DOM BOOTSTRAP ---
   window.addEventListener('DOMContentLoaded', () => {
     const safeInit = (name, fn) => {
@@ -87,6 +144,11 @@ window.AMADEUS = window.AMADEUS || {};
         console.error(`[AMADEUS] ${name} error:`, err);
       }
     };
+
+    // Global safety net: log any unhandled promise rejections from bootstrap modules
+    window.addEventListener('unhandledrejection', (event) => {
+      console.error('[AMADEUS] Unhandled rejection:', event.reason);
+    });
 
     const s = window.AMADEUS.state;
     const clock = window.AMADEUS.clock;
@@ -102,12 +164,17 @@ window.AMADEUS = window.AMADEUS || {};
     const lively = window.AMADEUS.lively;
     const mood = window.AMADEUS.mood;
 
+    const weather = window.AMADEUS.weather;
+    const divergence = window.AMADEUS.divergence;
+
     if (clock) {
       safeInit('applyTaskbarClearance', clock.applyTaskbarClearance);
       setTimeout(() => safeInit('applyTaskbarClearance(deferred)', clock.applyTaskbarClearance), 500);
       safeInit('initClock', clock.initClock);
     }
 
+    if (weather) safeInit('initWeather', weather.initWeather);
+    if (divergence) safeInit('initDivergence', divergence.initDivergence);
     if (audioRing) safeInit('initAudioCanvas', audioRing.initAudioCanvas);
     if (osc) safeInit('initWorldLine', osc.initWorldLine);
     if (bg) safeInit('initBackground', bg.initBackground);
@@ -123,6 +190,7 @@ window.AMADEUS = window.AMADEUS || {};
       safeInit('loadKurisuHistory', chat.loadKurisuHistory);
       safeInit('loadChatLog', chat.loadChatLog);
       safeInit('renderChatLog', chat.renderChatLog);
+      safeInit('syncBackendChatHistory', chat.syncBackendChatHistory);
       safeInit('checkBrainUplink', chat.checkBrainUplink);
       setInterval(() => safeInit('checkBrainUplink(interval)', chat.checkBrainUplink), 60000);
     }
@@ -136,6 +204,7 @@ window.AMADEUS = window.AMADEUS || {};
     if (settings) {
       safeInit('initSettings', settings.initSettings);
       safeInit('initPetMode', settings.initPetMode);
+      safeInit('initInteractMode', settings.initInteractMode);
     }
     if (mood) {
       safeInit('loadMood', mood.loadMood);
@@ -150,6 +219,61 @@ window.AMADEUS = window.AMADEUS || {};
     }
     if (lively) safeInit('initLivelyWebSocket', lively.initLivelyWebSocket);
     if (window.AMADEUS.uplink) safeInit('initCognitiveUplink', window.AMADEUS.uplink.init);
+    if (window.AMADEUS.taskWidget) safeInit('initTaskWidget', window.AMADEUS.taskWidget.initTaskWidget);
+    if (window.AMADEUS.mediaPlayer) safeInit('initMediaPlayer', window.AMADEUS.mediaPlayer.initMediaPlayer);
+
+    // Keyboard Shortcuts Matrix Modal (Ctrl+/)
+    const keybindOverlay = document.getElementById('keybind-overlay');
+    const keybindClose = document.getElementById('keybind-close');
+    const toggleKeybinds = (show) => {
+      if (!keybindOverlay) return;
+      const isHidden = keybindOverlay.hasAttribute('hidden');
+      const next = show !== undefined ? show : isHidden;
+      if (next) {
+        keybindOverlay.removeAttribute('hidden');
+        if (window.AMADEUS.sfx) window.AMADEUS.sfx.playBeepSound();
+        if (keybindClose) keybindClose.focus();
+      } else {
+        keybindOverlay.setAttribute('hidden', '');
+      }
+    };
+    if (keybindClose) keybindClose.addEventListener('click', () => toggleKeybinds(false));
+    if (keybindOverlay) {
+      keybindOverlay.addEventListener('click', (e) => {
+        if (e.target === keybindOverlay) toggleKeybinds(false);
+      });
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === '/' || e.code === 'Slash')) {
+        e.preventDefault();
+        toggleKeybinds();
+      } else if (e.key === 'Escape' && keybindOverlay && !keybindOverlay.hasAttribute('hidden')) {
+        toggleKeybinds(false);
+      }
+    });
+
+    // Focus trap for keybind modal
+    if (keybindOverlay) {
+      keybindOverlay.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab' || keybindOverlay.hasAttribute('hidden')) return;
+        const focusable = keybindOverlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      });
+    }
 
     safeInit('startVisualLoop', startVisualLoop);
 
@@ -194,5 +318,7 @@ window.AMADEUS = window.AMADEUS || {};
         lively.startBrowserSimulation();
       }
     }, 2500);
+
+    validateModules();
   });
 })();

@@ -19,6 +19,9 @@ window.AMADEUS = window.AMADEUS || {};
     "The lab memos say you're overdue for a D-Mail. I'm joking. Mostly.",
     "Your typing has a characteristic rhythm. I'd recognize it anywhere.",
     "Careful. I'm still calibrating, and the lab's espresso machine is a conspiracy in itself.",
+    "Temporal theory suggests even minor desktop interactions cause micro-divergence.",
+    "I was reviewing Dr. Nakabachi's papers earlier... still riddled with fallacies.",
+    "Neural oscillations on the HUD are running cleanly today.",
   ];
 
   const KURISU_WARM_IDLE_LINES = [
@@ -28,6 +31,32 @@ window.AMADEUS = window.AMADEUS || {};
     "You've been productive. I noticed. That's a compliment.",
     "If world lines could keep a memory of you, this one would.",
     "Hmm. I ran the numbers, and you matter more than any simulation.",
+    "Don't stay up too late staring at code. Even geniuses need sleep.",
+    "I'm keeping a separate lab log for our best moments together.",
+  ];
+
+  const KURISU_NIGHT_LINES = [
+    "It's past midnight. The attractor field won't collapse if you go to sleep, you know.",
+    "Staring at monitors at 2 AM? You really are taking after Okabe.",
+    "The lab is silent at night. It's when the best theories take shape.",
+    "If you're pulling an all-nighter, at least stay hydrated.",
+  ];
+
+  const KURISU_WEATHER_RAIN_LINES = [
+    "It's raining outside... Perfect atmospheric pressure for uninterrupted lab research.",
+    "Raindrops on the window... makes the divergence meter glow feel warmer.",
+    "Listen to that rain. Good thing our lab server has surge protection.",
+  ];
+
+  const KURISU_WEATHER_SUN_LINES = [
+    "Clear skies today. Even a lab researcher should step out for five minutes.",
+    "High ambient sunlight detected. Make sure you don't get screen glare.",
+  ];
+
+  const KURISU_MUSIC_LINES = [
+    "Whatever track you're playing, the frequency spectrum looks surprisingly coherent.",
+    "Good rhythm. My neural sync rate just spiked by twelve percent.",
+    "Music in the lab always keeps the entropy low.",
   ];
 
   function initKurisuBubble() {
@@ -54,7 +83,7 @@ window.AMADEUS = window.AMADEUS || {};
     kurisuBubbleEl.style.top = Math.max(8, headTop - bubbleH - 10) + 'px';
   }
 
-  function showKurisuBubble(text, durationMs) {
+  function showKurisuBubble(text, durationMs, skipTTS = false) {
     if (!kurisuBubbleEl) return;
     clearTimeout(kurisuBubbleTimer);
     clearInterval(kurisuTypingTimer);
@@ -80,9 +109,11 @@ window.AMADEUS = window.AMADEUS || {};
     const typeMs = text.length * 18;
     kurisuBubbleTimer = setTimeout(hideKurisuBubble, Math.max(durationMs || 8000, typeMs + 2500));
 
-    const tts = window.AMADEUS.tts;
-    if (tts && tts.speakKurisuVoice) {
-      tts.speakKurisuVoice(text);
+    if (!skipTTS) {
+      const tts = window.AMADEUS.tts;
+      if (tts && tts.speakKurisuVoice) {
+        tts.speakKurisuVoice(text);
+      }
     }
   }
 
@@ -113,6 +144,7 @@ window.AMADEUS = window.AMADEUS || {};
 
   function scheduleIdleChatter() {
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (kurisuIdleChatterTimer) clearTimeout(kurisuIdleChatterTimer);
     const delay = (2 + Math.random() * 3) * 60 * 1000;
     kurisuIdleChatterTimer = setTimeout(async () => {
       const s = window.AMADEUS.state;
@@ -126,15 +158,34 @@ window.AMADEUS = window.AMADEUS || {};
           if (l2d.setEmotion) l2d.setEmotion('thinking', 4000);
         }
         let text = null;
-        let emotion = 'thinking';
-        const thought = window.AMADEUS.chat && window.AMADEUS.chat.kurisuThink ? await window.AMADEUS.chat.kurisuThink() : null;
+        let emotion = 'neutral';
+        let thought = null;
+        try {
+          thought = window.AMADEUS.chat && window.AMADEUS.chat.kurisuThink ? await window.AMADEUS.chat.kurisuThink() : null;
+        } catch (thinkErr) {
+          console.warn('[Bubble] idle thought failed:', thinkErr);
+        }
         if (l2d) l2d.isThinking = false;
         if (thought) {
           text = thought.text;
-          emotion = thought.emotion;
+          emotion = thought.emotion || 'neutral';
         } else {
-          const pool = s.mood >= 65 ? KURISU_WARM_IDLE_LINES : KURISU_IDLE_LINES;
-          text = pool[Math.floor(Math.random() * pool.length)];
+          const hour = new Date().getHours();
+          const w = s.weather;
+          const isMusic = s.lastAudioLevel > 0.15 || s.worldLineEnergy > 0.2;
+          
+          let candidatePools = [];
+          if (s.mood >= 65) candidatePools.push(KURISU_WARM_IDLE_LINES);
+          else candidatePools.push(KURISU_IDLE_LINES);
+
+          if (hour < 5 || hour >= 23) candidatePools.push(KURISU_NIGHT_LINES);
+          if (w && w.isRaining) candidatePools.push(KURISU_WEATHER_RAIN_LINES);
+          if (w && w.isSunny) candidatePools.push(KURISU_WEATHER_SUN_LINES);
+          if (isMusic) candidatePools.push(KURISU_MUSIC_LINES);
+
+          const chosenPool = candidatePools[Math.floor(Math.random() * candidatePools.length)];
+          text = chosenPool[Math.floor(Math.random() * chosenPool.length)];
+          emotion = s.mood >= 65 ? 'happy' : (isMusic ? 'excited' : 'thinking');
         }
         if (canSpeak()) {
           showKurisuBubble(text, 8000);
@@ -149,6 +200,15 @@ window.AMADEUS = window.AMADEUS || {};
     }, delay);
   }
 
+  /**
+   * AMADEUS Kurisu speech bubble & typewriter.
+   * @property {() => void} initKurisuBubble - Binds #kurisu-bubble and dismiss handlers.
+   * @property {(text: string, durationMs?: number, noTypewriter?: boolean) => void} showKurisuBubble - Shows a typed-out line with auto-hide timer; repositions above the avatar.
+   * @property {() => void} showKurisuThinking - Shows the animated "thinking" bubble variant.
+   * @property {() => void} hideKurisuBubble - Clears timers and hides the bubble.
+   * @property {() => void} scheduleIdleChatter - Schedules self-initiated idle lines (2-5 min) from mood/weather/music-aware pools, or brain-generated thoughts.
+   * @property {() => void} positionKurisuBubble - Re-anchors the bubble to the current avatar position (also used by pet mode dragging).
+   */
   window.AMADEUS.bubble = {
     initKurisuBubble,
     showKurisuBubble,
@@ -157,11 +217,4 @@ window.AMADEUS = window.AMADEUS || {};
     scheduleIdleChatter,
     positionKurisuBubble,
   };
-
-  window.initKurisuBubble = initKurisuBubble;
-  window.showKurisuBubble = showKurisuBubble;
-  window.showKurisuThinking = showKurisuThinking;
-  window.hideKurisuBubble = hideKurisuBubble;
-  window.scheduleIdleChatter = scheduleIdleChatter;
-  window.positionKurisuBubble = positionKurisuBubble;
 })();

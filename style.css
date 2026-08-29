@@ -59,6 +59,22 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+}
+
+/* Disable text selection only on interactive HUD chrome; content areas
+   (chat log, news, inputs) remain selectable for accessibility. */
+.hud-panel,
+button,
+.pet-toggle,
+.media-btn,
+.chat-mic,
+.chat-send,
+.task-new-btn,
+.para-organize-btn,
+.keybind-close,
+.setting-row,
+.news-item,
+.task-item {
   user-select: none;
 }
 
@@ -154,7 +170,13 @@ body.night-mode {
   width: 100%;
   height: 100%;
   z-index: 2; /* character on top of visualizer and background grid */
-  pointer-events: auto; /* enable character clicking */
+  pointer-events: none; /* click through to desktop by default */
+}
+
+/* Clicks reach Kurisu when Talk mode is on, or when Pet mode needs dragging */
+#live2d-canvas.interact-mode,
+body.pet-mode #live2d-canvas {
+  pointer-events: auto;
 }
 
 #audio-canvas {
@@ -193,10 +215,16 @@ body.night-mode {
   height: 8vmin;
   transform: translateX(-50%);
   z-index: 3; /* above the Live2D canvas so feet-taps hit the shadow */
-  pointer-events: auto; /* clicking her shadow is its own interaction */
+  pointer-events: none; /* click through to desktop by default */
   cursor: pointer;
   background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.5), transparent 70%);
   filter: blur(3px);
+}
+
+/* Feet-taps only register when Talk/Pet mode is active */
+body.interact-mode #l2d-shadow,
+body.pet-mode #l2d-shadow {
+  pointer-events: auto; /* clicking her shadow is its own interaction */
 }
 
 /* Dev-only L2D debug overlay (Ctrl+Shift+D) — live parameter stream over the
@@ -344,10 +372,12 @@ body.night-mode {
     rgba(255, 77, 85, 0.01),
     rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.03)
   );
-  background-size: 100% 4px, 6px 100%;
+  /* Scanlines: 8px pitch (vs 4px) with lower opacity halves the cost of this
+     full-viewport composite while retaining the CRT look. */
+  background-size: 100% 8px, 6px 100%;
   z-index: 999;
   pointer-events: none;
-  opacity: var(--crt-scanline-opacity, 0.55);
+  opacity: var(--crt-scanline-opacity, 0.3);
 }
 
 /* Unified CRT finish: corner vignette + soft bloom so every panel and the
@@ -435,6 +465,8 @@ body.night-mode {
   z-index: 9984;
   pointer-events: none;
   opacity: 0;
+  will-change: opacity;
+  contain: layout style paint;
   background: radial-gradient(ellipse at 50% 55%, rgba(255, 60, 90, 0.28), transparent 68%);
 }
 
@@ -461,14 +493,17 @@ body.idle #bg-album {
   width: 100%;
   height: 100%;
   z-index: 10;
-  /* Smooth fade used by idle power-down */
   transition: opacity 1.2s ease;
-  padding: 20px;
+  padding: clamp(10px, 1.5vw, 20px);
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto 1fr auto auto;
-  gap: 20px;
-  pointer-events: none; /* Let clicks pass to desktop if wallpaper */
+  grid-template-columns: 1fr minmax(280px, 1fr);
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "top-left  top-right"
+    "bottom-left  right-stack"
+    "bottom-left  right-stack";
+  gap: clamp(10px, 1.5vw, 16px);
+  pointer-events: none;
 }
 
 /* HUD Panel Base - Glassmorphic */
@@ -486,6 +521,14 @@ body.idle #bg-album {
     0 8px 32px 0 rgba(0, 0, 0, 0.5),
     inset 0 0 12px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.06);
   transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.25s ease;
+}
+
+/* Reduce backdrop-filter cost on high-DPI / 4K displays */
+@media (min-resolution: 2dppx) {
+  .hud-panel {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
 }
 
 /* Shared inner CRT depth: consistent inset glow + sheen across every panel */
@@ -524,6 +567,14 @@ body.idle #bg-album {
   font-weight: 700;
   color: var(--text-muted);
   letter-spacing: 2px;
+}
+
+.panel-tag.feed-toggle {
+  cursor: pointer;
+}
+
+.panel-tag.feed-toggle:hover {
+  color: var(--text-main);
 }
 
 /* Status Lights */
@@ -571,8 +622,9 @@ body.idle #bg-album {
 .top-left-panel {
   grid-column: 1;
   grid-row: 1;
-  max-width: 380px;
   align-self: start;
+  width: 100%;
+  max-width: 420px;
 }
 
 /* Nixie Tube Clock (top-left) — matches the divergence meter tubes */
@@ -651,8 +703,8 @@ body.idle #bg-album {
 
 .alert-item {
   font-family: var(--font-hud);
-  font-size: 9px;
-  color: var(--text-main);
+  font-size: 10px;
+  color: #e8eaef;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -665,7 +717,7 @@ body.idle #bg-album {
   transform: rotate(45deg);
 }
 
-/* Now Playing (music metadata) */
+/* Now Playing (music metadata & interactive controls) */
 .now-playing {
   margin-top: 10px;
   border-top: 1px dashed rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.2);
@@ -675,11 +727,26 @@ body.idle #bg-album {
   gap: 2px;
 }
 
+.np-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
 .np-label {
   font-family: var(--font-hud);
-  font-size: 8px;
+  font-size: 9px;
   letter-spacing: 2px;
-  color: var(--text-muted);
+  color: #8fa8bc;
+}
+
+.np-status-led {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ff4d55;
+  box-shadow: 0 0 6px #ff4d55;
+  animation: pulse-dot 1.5s infinite alternate;
 }
 
 .np-track {
@@ -693,39 +760,131 @@ body.idle #bg-album {
 
 .np-artist {
   font-family: var(--font-body);
-  font-size: 9px;
-  color: var(--text-muted);
+  /* 9px muted text fails WCAG AA for small text; brighten + bump size so the
+     now-playing line clears 4.5:1 on the dark media panel. */
+  font-size: 10px;
+  color: #b9c9d6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* Pet Mode toggle */
-.pet-toggle {
-  margin-top: 10px;
+.media-controls-row {
   display: flex;
   align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.media-btn {
+  background: rgba(255, 77, 85, 0.12);
+  border: 1px solid rgba(255, 77, 85, 0.35);
+  color: #ff99aa;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: bold;
+  padding: 4px 8px;
+  /* WCAG 2.2 touch target: keep a compact look but guarantee a 44x44px
+     hit area for media transport controls. */
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.media-btn:hover {
+  background: rgba(255, 77, 85, 0.35);
+  color: #fff;
+  box-shadow: 0 0 8px rgba(255, 77, 85, 0.5);
+  transform: translateY(-1px);
+}
+
+.media-btn:focus-visible {
+  outline: 2px solid #ff4d55;
+  outline-offset: 2px;
+}
+
+.media-btn.media-active {
+  background: #ff4d55;
+  color: #fff;
+  box-shadow: 0 0 12px #ff4d55;
+  transform: scale(0.95);
+}
+
+.media-play-btn {
+  padding: 4px 9px;
+  color: #ffb14d;
+  border-color: rgba(255, 177, 77, 0.4);
+}
+
+.media-vol-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.media-vol-icon {
+  font-size: 9px;
+  opacity: 0.8;
+}
+
+.media-vol-btn {
+  padding: 6px 8px;
+  font-size: 10px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Screen Co-Pilot Shutter Flash */
+.screen-flash {
+  position: fixed;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.85);
+  z-index: 99999;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease-out;
+}
+
+.screen-flash.flash-active {
+  opacity: 1;
+  transition: none;
+}
+
+/* Pet Mode toggle (inline in header) */
+.pet-toggle {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  width: 100%;
-  padding: 5px 8px;
-  background: rgba(15, 18, 27, 0.6);
-  border: 1px dashed rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.25);
+  padding: 6px 10px;
+  background: rgba(15, 18, 27, 0.65);
+  border: 1px dashed rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.3);
+  border-radius: 4px;
   cursor: pointer;
   font-family: var(--font-hud);
-  font-size: 8px;
-  letter-spacing: 2px;
+  font-size: 10px;
+  letter-spacing: 1px;
   color: var(--text-muted);
-  transition: border-color 0.2s, color 0.2s;
+  transition: all 0.2s ease;
+  user-select: none;
+  min-height: 44px;
 }
 
 .pet-toggle:hover {
   border-color: var(--accent-cyan);
   color: var(--text-main);
+  background: rgba(255, 77, 85, 0.15);
 }
 
 .pet-toggle .pet-toggle-led {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   background: var(--text-muted);
   transform: rotate(45deg);
   transition: background 0.2s, box-shadow 0.2s;
@@ -738,12 +897,12 @@ body.idle #bg-album {
 
 .pet-toggle.active {
   border-style: solid;
-  border-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.5);
+  border-color: var(--accent-cyan);
   color: var(--accent-cyan);
+  background: rgba(0, 240, 255, 0.1);
 }
 
 .pet-toggle .pet-toggle-state {
-  margin-left: auto;
   font-size: 8px;
   letter-spacing: 1px;
 }
@@ -752,13 +911,68 @@ body.idle #bg-album {
   color: var(--accent-cyan);
 }
 
+/* Interact Mode toggle - allows clicking on Kurisu */
+.interact-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(15, 18, 27, 0.65);
+  border: 1px dashed rgba(255, 85, 170, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--font-hud);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  transition: all 0.2s ease;
+  user-select: none;
+  min-height: 44px;
+}
+
+.interact-toggle:hover {
+  border-color: #ff55aa;
+  color: var(--text-main);
+  background: rgba(255, 85, 170, 0.15);
+}
+
+.interact-toggle .interact-toggle-led {
+  width: 5px;
+  height: 5px;
+  background: var(--text-muted);
+  transform: rotate(45deg);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.interact-toggle.active .interact-toggle-led {
+  background: #ff55aa;
+  box-shadow: 0 0 6px #ff55aa;
+}
+
+.interact-toggle.active {
+  border-style: solid;
+  border-color: #ff55aa;
+  color: #ff55aa;
+  background: rgba(255, 85, 170, 0.1);
+}
+
+.interact-toggle .interact-toggle-state {
+  font-size: 8px;
+  letter-spacing: 1px;
+}
+
+.interact-toggle.active .interact-toggle-state {
+  color: #ff55aa;
+}
+
 /* PANEL: AMADEUS Cognitive Core (Top-Right) */
 .top-right-panel {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
   align-self: start;
-  width: 380px;
+  width: 100%;
+  max-width: 420px;
   border-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.18);
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), inset 0 0 12px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.04);
 }
@@ -813,6 +1027,22 @@ body.idle #bg-album {
 #wl-mind {
   color: rgba(255, 85, 170, 0.95);
   text-shadow: 0 0 6px rgba(255, 85, 170, 0.6);
+}
+
+/* Right stack: chat + task + settings share the right column */
+.right-stack {
+  grid-column: 2;
+  grid-row: 2 / span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.right-stack > .hud-panel {
+  pointer-events: auto;
+  flex-shrink: 0;
 }
 
 /* PANEL: Center HUD Banner */
@@ -878,46 +1108,64 @@ body.idle #bg-album {
 }
 
 /* PANEL: Realtime News Feed (Bottom-Left) */
-/* PANEL: Realtime News Feed (Bottom-Left)
-   Absolutely anchored instead of grid-placed: the auto-sized grid rows
-   overflowed on short (720p) screens and pushed this panel's bottom edge
-   below the viewport. Out of flow, the panel always floats above the taskbar
-   and can never be clipped. */
 .bottom-left-panel {
-  position: absolute;
-  left: 20px;
-  bottom: calc(20px + var(--taskbar-clear, 0px));
-  width: 500px;
-  height: 260px;
+  grid-column: 1;
+  grid-row: 2 / span 2;
+  width: clamp(320px, 38vw, 520px);
+  max-width: 100%;
+  min-width: 280px;
+  min-height: 220px;
+  max-height: 45vh;
+  align-self: end;
+  box-sizing: border-box;
+}
+
+.bottom-left-panel .panel-body,
+.news-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+}
+
+/* Let the news container fill available height in the grid row */
+.bottom-left-panel {
   display: flex;
   flex-direction: column;
 }
 
-.bottom-left-panel .panel-body {
-  flex-grow: 1;
-  overflow: hidden;
-}
-
 .news-container {
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.35) transparent;
+  contain: strict;
 }
 
 /* Custom Scrollbar for News Feed */
 .news-container::-webkit-scrollbar {
-  width: 3px;
+  width: 4px;
 }
 .news-container::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 2px;
 }
 .news-container::-webkit-scrollbar-thumb {
-  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.2);
-  border-radius: 1px;
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.35);
+  border-radius: 2px;
 }
 .news-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.5);
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.65);
 }
 
 .news-loading {
@@ -925,28 +1173,47 @@ body.idle #bg-album {
   font-size: 11.5px;
   color: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
   animation: scan-flicker 0.15s infinite alternate;
+  padding: 12px 6px;
 }
 
 .news-item {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   text-decoration: none;
-  margin-bottom: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
-  padding-bottom: 8px;
-  transition: background 0.2s ease;
+  color: inherit;
+  margin: 0;
+  border-bottom: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.12);
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 2px solid transparent;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .news-item:hover {
-  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.04);
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.08);
+  border-left-color: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
+  border-bottom-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.3);
+  transform: translateX(3px);
 }
 
 .news-title {
   font-family: var(--font-body);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
-  color: var(--text-main);
-  line-height: 1.4;
-  margin-bottom: 2px;
+  color: #f3f2f8;
+  line-height: 1.32;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
   transition: color 0.15s ease;
 }
 
@@ -957,19 +1224,41 @@ body.idle #bg-album {
 .news-meta {
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.7);
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
-.news-panel-body {
-  flex-grow: 1;
+.news-score {
+  color: #ff9e42;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.news-time {
+  /* Raised from 0.45 → 0.66 alpha to clear WCAG AA (4.5:1) on the dark panel bg. */
+  color: rgba(255, 255, 255, 0.66);
+  flex-shrink: 1;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .news-domain {
   color: var(--primary-pink);
-  font-weight: bold;
+  font-weight: 700;
+  margin-left: auto;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
 }
 
 #settings-body {
@@ -984,6 +1273,7 @@ body.idle #bg-album {
   color: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
   text-shadow: 0 0 8px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.55);
   animation: blink-fast 1s infinite steps(2, start);
+  will-change: opacity;
 }
 
 @keyframes blink-fast {
@@ -992,14 +1282,9 @@ body.idle #bg-album {
 
 /* --- CHAT TERMINAL (bottom-center) --- */
 .chat-panel {
-  position: absolute;
-  right: 20px;
-  bottom: calc(70px + var(--taskbar-clear, 0px));
-  width: 420px;
-  max-width: calc(100vw - 40px);
-  z-index: 40;
+  width: clamp(300px, 32vw, 460px);
+  max-width: 100%;
   cursor: default;
-  /* Smooth fade used by idle power-down */
   transition: opacity 0.4s ease, transform 0.3s ease;
 }
 
@@ -1022,7 +1307,8 @@ body.idle .hud-panel:focus-within {
 }
 
 .chat-log {
-  height: 168px;
+  min-height: 120px;
+  max-height: 35vh;
   overflow-y: auto;
   padding: 4px 4px 4px 0;
   margin-bottom: 8px;
@@ -1031,6 +1317,7 @@ body.idle .hud-panel:focus-within {
   gap: 8px;
   user-select: text;
   cursor: auto;
+  contain: strict;
 }
 
 .chat-log::-webkit-scrollbar {
@@ -1150,6 +1437,11 @@ body.idle .hud-panel:focus-within {
   background: rgba(164, 145, 149, 0.1);
   border: 1px solid rgba(164, 145, 149, 0.3);
 }
+.chat-source.src-telegram {
+  color: #29b6f6;
+  background: rgba(41, 182, 246, 0.15);
+  border: 1px solid rgba(41, 182, 246, 0.4);
+}
 
 .chat-input-row {
   display: flex;
@@ -1181,35 +1473,47 @@ body.idle .hud-panel:focus-within {
 
 .chat-send {
   font-family: var(--font-hud);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 900;
   letter-spacing: 1px;
   color: #050102;
   background: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
   border: none;
   border-radius: 5px;
-  padding: 0 14px;
+  padding: 0 16px;
   cursor: pointer;
   pointer-events: auto;
-  min-height: 34px;
+  min-width: 44px;
+  min-height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: opacity 0.2s ease, transform 0.1s ease;
 }
 
+.chat-send:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.chat-send:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 .chat-mic {
-  font-size: 14px;
+  font-size: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 10px;
+  padding: 0 12px;
   background: rgba(8, 10, 18, 0.85);
   border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.35);
   border-radius: 5px;
   cursor: pointer;
   pointer-events: auto;
-  min-height: 34px;
+  min-width: 44px;
+  min-height: 44px;
   transition: all 0.2s ease;
   user-select: none;
 }
@@ -1217,6 +1521,11 @@ body.idle .hud-panel:focus-within {
 .chat-mic:hover {
   background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.15);
   border-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.6);
+}
+
+.chat-mic:focus-visible {
+  outline: 2px solid #ff4d55;
+  outline-offset: 2px;
 }
 
 .chat-mic.listening {
@@ -1235,23 +1544,31 @@ body.idle .hud-panel:focus-within {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 8px;
+  padding: 8px 10px;
   margin-bottom: 6px;
-  background: rgba(255, 77, 85, 0.08);
-  border: 1px solid rgba(255, 77, 85, 0.25);
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.06);
+  border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.22);
   border-radius: 4px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+.biz-card:hover {
+  background: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.12);
+  border-color: rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.45);
+}
+
+.biz-card span:first-child {
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
 }
 
 .biz-val {
   font-weight: 700;
   color: #ffd0a0;
-}
-
-.chat-send:hover {
-  opacity: 0.85;
-  transform: translateY(-1px);
+  text-shadow: 0 0 6px rgba(255, 208, 160, 0.3);
 }
 
 .chat-send:active {
@@ -1276,13 +1593,10 @@ body.idle .hud-panel:focus-within {
 /* --- SETTINGS PANEL (bottom-right, floats over content so it can never push
    the chat terminal off-screen when expanded) --- */
 .settings-panel {
-  position: absolute;
-  right: 20px;
-  bottom: calc(20px + var(--taskbar-clear, 0px));
-  width: 300px;
-  max-width: 92vw;
+  width: clamp(240px, 22vw, 340px);
+  max-width: 100%;
   cursor: default;
-  max-height: 60vh;
+  max-height: 55vh;
   overflow: hidden auto;
   z-index: 50;
 }
@@ -1355,6 +1669,19 @@ body.hide-crt .crt-overlay,
 body.hide-crt .crt-curve,
 body.hide-crt .vignette-overlay,
 body.hide-crt .bloom-overlay {
+  display: none;
+}
+
+/* Right-stack visibility toggles */
+body.hide-chat .chat-panel {
+  display: none;
+}
+
+body.hide-settings .right-stack .settings-panel {
+  display: none;
+}
+
+body.hide-tasks .right-stack .task-widget-panel {
   display: none;
 }
 
@@ -1444,4 +1771,413 @@ body.user-away .crt-overlay {
   .center-banner {
     display: none;
   }
+  .right-stack {
+    gap: 10px;
+  }
+}
+
+/* ==========================================================================
+   DIVERGENCE METER (Steins;Gate Holographic Nixie Array)
+   ========================================================================== */
+.divergence-meter-wrap {
+  margin: 6px 0 10px 0;
+  width: 100%;
+  max-width: 224px;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+#divergence-canvas {
+  width: 220px;
+  height: 46px;
+  display: block;
+  cursor: pointer;
+  border-radius: 4px;
+  box-shadow: 0 0 16px rgba(255, 110, 40, 0.15);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+#divergence-canvas:hover {
+  transform: scale(1.02);
+  box-shadow: 0 0 22px rgba(255, 120, 50, 0.35);
+}
+
+#divergence-canvas:active {
+  transform: scale(0.98);
+}
+
+/* ==========================================================================
+   KEYBOARD SHORTCUT MATRIX MODAL OVERLAY (Ctrl+/)
+   ========================================================================== */
+.keybind-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 4, 8, 0.78);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: keybind-fade 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.keybind-overlay[hidden] {
+  display: none !important;
+}
+
+@keyframes keybind-fade {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.keybind-modal {
+  width: 620px;
+  max-width: 90vw;
+  background: rgba(14, 10, 16, 0.94);
+  border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.45);
+  border-radius: 8px;
+  padding: 20px 24px;
+  box-shadow: 0 0 35px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.25),
+              inset 0 0 18px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.08);
+  color: var(--text-main);
+}
+
+.keybind-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px dashed rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.3);
+  padding-bottom: 10px;
+  margin-bottom: 16px;
+}
+
+.keybind-title {
+  font-family: var(--font-hud);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  color: rgb(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b));
+  text-shadow: 0 0 10px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.5);
+}
+
+.keybind-close {
+  background: transparent;
+  border: 1px solid rgba(255, 77, 85, 0.3);
+  color: var(--text-muted);
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.15s ease;
+}
+
+.keybind-close:hover {
+  color: #fff;
+  border-color: #ff4d55;
+  background: rgba(255, 77, 85, 0.2);
+}
+
+.keybind-close:focus-visible {
+  outline: 2px solid #ff4d55;
+  outline-offset: 2px;
+}
+
+.keybind-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 580px) {
+  .keybind-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+.keybind-sec-title {
+  font-family: var(--font-hud);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.keybind-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.keybind-row span {
+  color: #e2d2d6;
+  text-align: right;
+  font-size: 11px;
+}
+
+.keybind-modal kbd {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: #ffb14d;
+  background: rgba(20, 14, 20, 0.85);
+  border: 1px solid rgba(255, 177, 77, 0.35);
+  border-radius: 4px;
+  padding: 2px 6px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+}
+
+.keybind-footer {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   OBSIDIAN TASK MATRIX WIDGET
+   ========================================================================== */
+
+.task-widget-panel {
+  width: clamp(280px, 28vw, 400px);
+  max-width: 100%;
+  min-height: 120px;
+  max-height: 25vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 12, 20, 0.82);
+  border: 1px solid rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.3);
+  border-radius: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65), 0 0 18px rgba(var(--hud-emote-r), var(--hud-emote-g), var(--hud-emote-b), 0.15);
+  backdrop-filter: blur(12px);
+  z-index: 30;
+  overflow: hidden;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.task-widget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: rgba(255, 77, 85, 0.08);
+  border-bottom: 1px solid rgba(255, 77, 85, 0.2);
+  user-select: none;
+  cursor: pointer;
+}
+
+.task-widget-body {
+  padding: 8px 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-family: var(--font-hud);
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+}
+
+.task-meta-count {
+  color: #ffb14d;
+  font-weight: 700;
+}
+
+.task-list {
+  max-height: 80px;
+  overflow-y: auto;
+  margin-bottom: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 77, 85, 0.3) transparent;
+  contain: strict;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-main);
+  transition: all 0.2s ease;
+}
+
+.task-item:hover {
+  background: rgba(255, 77, 85, 0.06);
+  border-color: rgba(255, 77, 85, 0.25);
+}
+
+.task-item.completed {
+  opacity: 0.55;
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.task-checkbox-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.task-chk {
+  opacity: 0;
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.task-custom-chk {
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(255, 77, 85, 0.5);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.4);
+  display: inline-block;
+  position: relative;
+}
+
+.task-chk:checked + .task-custom-chk {
+  background: #ff4d55;
+  border-color: #ff4d55;
+}
+
+.task-chk:checked + .task-custom-chk::after {
+  content: '✓';
+  position: absolute;
+  top: -2px;
+  left: 2px;
+  font-size: 10px;
+  font-weight: bold;
+  color: #fff;
+}
+
+.task-text {
+  flex: 1;
+  overflow-wrap: break-word;
+  word-break: break-all;
+  line-height: 1.3;
+}
+
+.task-del {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.task-del:hover {
+  color: #ff4d55;
+  background: rgba(255, 77, 85, 0.15);
+}
+
+.task-input-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.task-new-input {
+  flex: 1;
+  background: rgba(14, 16, 26, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-main);
+  outline: none;
+}
+
+.task-new-input:focus {
+  border-color: #ff4d55;
+  box-shadow: 0 0 8px rgba(255, 77, 85, 0.3);
+}
+
+.task-new-btn {
+  background: rgba(255, 77, 85, 0.2);
+  border: 1px solid rgba(255, 77, 85, 0.4);
+  color: #ffb14d;
+  font-weight: bold;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.task-new-btn:hover {
+  background: #ff4d55;
+  color: #fff;
+}
+
+.task-new-btn:focus-visible {
+  outline: 2px solid #ff4d55;
+  outline-offset: 2px;
+}
+
+.para-organize-btn {
+  background: transparent;
+  border: 1px solid #00ffcc;
+  color: #00ffcc;
+  font-size: 9px;
+  padding: 1px 6px;
+  cursor: pointer;
+  border-radius: 2px;
+  letter-spacing: 1px;
+  transition: all 0.15s ease;
+}
+
+.para-organize-btn:hover {
+  background: rgba(0, 255, 204, 0.15);
+  box-shadow: 0 0 8px rgba(0, 255, 204, 0.4);
+}
+
+.para-organize-btn:focus-visible {
+  outline: 2px solid #00ffcc;
+  outline-offset: 2px;
 }

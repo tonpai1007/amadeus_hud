@@ -3,23 +3,30 @@ window.AMADEUS = window.AMADEUS || {};
 
 (function() {
   let livelyWS = null;
+  let livelyHb = null;
   let wsReconnectTimer = null;
+  let wsRetryCount = 0;
+  let wsIntentionallyClosed = false;
   let simulatedAudioTime = 0;
 
   function initLivelyWebSocket() {
+    wsIntentionallyClosed = false;
     if (livelyWS && (livelyWS.readyState === WebSocket.OPEN || livelyWS.readyState === WebSocket.CONNECTING)) {
       return;
     }
-    const brain = window.AMADEUS.chat && window.AMADEUS.chat.KURISU_BRAIN;
-    if (!brain || !brain.endpoint) return;
-    const wsUrl = `${brain.endpoint.replace('http', 'ws')}/api/v1/ws/lively`;
+    const client = window.AMADEUS.brainClient;
+    const wsUrl = client.getWsUrl('/ws/lively');
     try {
       livelyWS = new WebSocket(wsUrl);
+      livelyHb = window.AMADEUS.createWsHeartbeat(livelyWS, { intervalMs: 25000, staleMs: 90000 });
       livelyWS.onopen = () => {
         console.log('[Kurisu] Telemetry WebSocket connected to Brain.');
+        wsRetryCount = 0;
+        if (livelyHb) livelyHb.start();
         if (window.AMADEUS.chat) window.AMADEUS.chat.setUplink('online', 'UPLINK: BRAIN_LINK');
       };
       livelyWS.onmessage = (event) => {
+        if (livelyHb) livelyHb.touch();
         try {
           const data = JSON.parse(event.data);
           const s = window.AMADEUS.state;
@@ -40,20 +47,40 @@ window.AMADEUS = window.AMADEUS || {};
             const goalEl = document.getElementById('news-status');
             if (goalEl) goalEl.textContent = `GOAL: ${data.system.active_goals[0].substring(0, 14)}`;
           }
-          if (data.business && window.AMADEUS.news) {
-            window.AMADEUS.news.setBusinessData(data.business);
-          }
         } catch (e) { /* ignore */ }
       };
       livelyWS.onclose = () => {
-        clearTimeout(wsReconnectTimer);
-        wsReconnectTimer = setTimeout(initLivelyWebSocket, 6000);
+        if (livelyHb) livelyHb.stop();
+        if (wsIntentionallyClosed) return;
+        scheduleWsReconnect();
       };
       livelyWS.onerror = () => {
         try { livelyWS.close(); } catch (e) {}
       };
     } catch (err) {
-      wsReconnectTimer = setTimeout(initLivelyWebSocket, 6000);
+      scheduleWsReconnect();
+    }
+  }
+
+  function scheduleWsReconnect() {
+    clearTimeout(wsReconnectTimer);
+    const delay = Math.min(12000, 1000 * Math.pow(1.5, wsRetryCount) + Math.random() * 500);
+    wsRetryCount++;
+    wsReconnectTimer = setTimeout(initLivelyWebSocket, delay);
+  }
+
+  // Intentional teardown: closes the telemetry socket WITHOUT arming the
+  // reconnect loop (used when Lively pauses playback or the page unloads, so
+  // a paused wallpaper stops holding sockets open).
+  function closeTelemetryWebSocket() {
+    wsIntentionallyClosed = true;
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+    wsRetryCount = 0;
+    if (livelyHb) livelyHb.stop();
+    if (livelyWS) {
+      try { livelyWS.close(); } catch (e) { /* already closed */ }
+      livelyWS = null;
     }
   }
 
@@ -117,8 +144,14 @@ window.AMADEUS = window.AMADEUS || {};
 
   function startBrowserSimulation() {
     const simulatedFFT = new Float32Array(128);
-    function simulateAudioLoop() {
+    let lastSimTime = 0;
+    const simInterval = 1000 / 30;
+
+    window.AMADEUS.onMasterTick((now) => {
       if (window.AMADEUS.state.isLivelyActive) return;
+      if (now - lastSimTime < simInterval) return;
+      lastSimTime = now;
+
       simulatedAudioTime += 0.07;
       for (let i = 0; i < 128; i++) {
         let val = Math.sin(simulatedAudioTime + i * 0.12) * 0.3 +
@@ -131,9 +164,7 @@ window.AMADEUS = window.AMADEUS || {};
         simulatedFFT[i] = val;
       }
       handleAudioFrame(simulatedFFT);
-      requestAnimationFrame(simulateAudioLoop);
-    }
-    simulateAudioLoop();
+    });
   }
 
   // --- Lively C# Native Callbacks ---
@@ -151,16 +182,20 @@ window.AMADEUS = window.AMADEUS || {};
     window.AMADEUS.state.isLivelyPaused = obj.IsPaused;
     const l2d = window.AMADEUS.state.live2DController;
     const power = window.AMADEUS.power;
-    if (l2d) {
-      if (obj.IsPaused) {
-        l2d.pause();
-        if (power) power.onUserAway();
-      } else {
-        l2d.resume();
-        if (power) {
-          power.markActivity();
-          power.onUserReturn();
-        }
+    const uplink = window.AMADEUS.uplink;
+    if (obj.IsPaused) {
+      // Stop holding sockets open while the wallpaper is paused.
+      if (uplink && uplink.close) uplink.close();
+      closeTelemetryWebSocket();
+      if (l2d) l2d.pause();
+      if (power) power.onUserAway();
+    } else {
+      initLivelyWebSocket();
+      if (uplink && uplink.init) uplink.init();
+      if (l2d) l2d.resume();
+      if (power) {
+        power.markActivity();
+        power.onUserReturn();
       }
     }
   };
@@ -195,58 +230,121 @@ window.AMADEUS = window.AMADEUS || {};
     }
   };
 
+  function toBoolean(val, defaultVal = false) {
+    if (typeof val === 'boolean') return val;
+    if (typeof val === 'number') return val !== 0;
+    if (typeof val === 'string') {
+      const s = val.trim().toLowerCase();
+      if (s === 'true' || s === '1' || s === 'yes' || s === 'on') return true;
+      if (s === 'false' || s === '0' || s === 'no' || s === 'off') return false;
+    }
+    return defaultVal;
+  }
+
+  function toNumber(val, min, max, defaultVal) {
+    const num = typeof val === 'number' ? val : parseFloat(val);
+    if (!Number.isFinite(num)) return defaultVal;
+    if (typeof min === 'number' && typeof max === 'number') {
+      return Math.max(min, Math.min(max, num));
+    }
+    return num;
+  }
+
   window.livelyPropertyListener = function(name, val) {
+    if (typeof name !== 'string' || !name) return;
     const settingsMod = window.AMADEUS.settings;
     const settings = window.AMADEUS.SETTINGS;
     switch (name) {
       case 'crtScanline': {
-        const opacity = (val / 100).toFixed(2);
+        const intensity = toNumber(val, 0, 100, 50);
+        const opacity = (intensity / 100).toFixed(2);
         document.documentElement.style.setProperty('--crt-scanline-opacity', opacity);
         const crtEl = document.querySelector('.crt-overlay') || document.getElementById('crt-overlay');
         if (crtEl) crtEl.style.opacity = opacity;
         break;
       }
       case 'scopeSpeed': {
+        const speed = Math.round(toNumber(val, 1, 10, 5));
         if (settings && settings.scope) {
-          settings.scope.speed = Math.max(1, Math.min(10, val));
-          if (settingsMod) settingsMod.saveSettings();
+          settings.scope.speed = speed;
+          if (settingsMod && settingsMod.saveSettings) settingsMod.saveSettings();
         }
         break;
       }
       case 'showAudioRing': {
-        const enabled = !!val;
+        const enabled = toBoolean(val, true);
         document.body.classList.toggle('hide-ring', !enabled);
         if (settings && settings.widgets) {
           settings.widgets.ring = enabled;
-          if (settingsMod) settingsMod.saveSettings();
+          if (settingsMod && settingsMod.saveSettings) settingsMod.saveSettings();
         }
         break;
       }
       case 'petMode': {
-        if (settingsMod) settingsMod.petApply(!!val);
+        const enabled = toBoolean(val, false);
+        if (settingsMod && settingsMod.petApply) settingsMod.petApply(enabled);
         break;
       }
       case 'perfGovernor': {
-        const l2d = window.AMADEUS.state.live2DController;
-        if (l2d && l2d.setPerfLevel) l2d.setPerfLevel(val);
+        let level = 2; // default high
+        if (typeof val === 'number' && Number.isFinite(val)) {
+          level = Math.max(0, Math.min(2, Math.round(val)));
+        } else if (typeof val === 'string') {
+          const s = val.trim().toLowerCase();
+          if (s.includes('saver') || s === '0' || s === 'low') level = 0;
+          else if (s.includes('balance') || s === '1' || s === 'mid' || s === 'medium') level = 1;
+          else if (s.includes('high') || s === '2') level = 2;
+        }
+        // Route through the shared shell governor (PERF.dpr / visualFps +
+        // canvas resize callbacks) as well as the Live2D controller, so the
+        // slider affects the whole HUD, not just the avatar. Mark the level
+        // as user-set so the auto-governor stops overriding it.
+        window.AMADEUS.state.perfLevelManual = true;
+        if (window.AMADEUS.setPerfLevel) window.AMADEUS.setPerfLevel(level);
+        const power = window.AMADEUS.power;
+        if (power && power.applyPerfLevel) {
+          power.applyPerfLevel();
+        } else {
+          const PERF = window.AMADEUS.PERF;
+          const levels = window.AMADEUS.PERF_LEVELS;
+          if (PERF && levels && levels[level]) {
+            PERF.dpr = levels[level].dpr;
+            PERF.visualFps = levels[level].visualFps;
+          }
+          const l2d = window.AMADEUS.state && window.AMADEUS.state.live2DController;
+          if (l2d && l2d.setPerfLevel) l2d.setPerfLevel(level);
+        }
         break;
       }
       case 'voiceEnabled': {
+        const enabled = toBoolean(val, true);
         if (settings) {
-          settings.voice = !!val;
-          if (settingsMod) settingsMod.saveSettings();
+          settings.voice = enabled;
+          if (settingsMod && settingsMod.saveSettings) settingsMod.saveSettings();
         }
         break;
       }
     }
   };
 
+  /**
+   * AMADEUS Lively native integration & telemetry WebSocket.
+   * Exposes the four `window.lively*` callbacks required by Lively's C# host
+   * (audio spectrum frames, playback pause/resume, now-playing track, settings
+   * property changes) plus the telemetry WS client used in browser mode.
+   * @property {() => void} initLivelyWebSocket - Opens (or reopens) the telemetry WebSocket with heartbeat + exponential reconnect.
+   * @property {() => void} closeTelemetryWebSocket - Tears the telemetry WebSocket down without arming reconnect (pause/unload).
+   * @property {number[]} handleAudioFrame - Feed for `livelyAudioListener` spectrum frames: drives beat pulse, mood energy and Live2D audio reaction.
+   * @property {() => void} startBrowserSimulation - Simulates Lively audio/playback events when the native API is absent.
+   * @property {(val: any, defaultVal?: boolean) => boolean} toBoolean - Pure: coerces bool/number/string ("true"/"1"/"on"/...) to boolean with default.
+   * @property {(val: any, min?: number, max?: number, defaultVal?: number) => number} toNumber - Pure: parses and clamps a number, returning defaultVal when not finite.
+   */
   window.AMADEUS.lively = {
     initLivelyWebSocket,
+    closeTelemetryWebSocket,
     handleAudioFrame,
     startBrowserSimulation,
+    toBoolean,
+    toNumber,
   };
-
-  window.initLivelyWebSocket = initLivelyWebSocket;
-  window.startBrowserSimulation = startBrowserSimulation;
 })();

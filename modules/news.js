@@ -1,4 +1,4 @@
-// modules/news.js - AMADEUS Realtime Intelligence & Business Ops Feed
+// modules/news.js - AMADEUS Realtime Intelligence & Cybernetic Feed
 window.AMADEUS = window.AMADEUS || {};
 
 (function() {
@@ -7,44 +7,92 @@ window.AMADEUS = window.AMADEUS || {};
   let lastNewsStories = [];
   let lastNewsReactionAt = 0;
 
-  const simulatedNewsPool = [
-    { title: "Bitcoin consolidates near local levels as trading indicators shift", url: "https://tradingview.com", score: 320, time: Date.now()/1000 - 3600 },
-    { title: "New WebGL standard promises ultra-low CPU memory footprint for widgets", url: "https://github.com", score: 185, time: Date.now()/1000 - 7200 },
-    { title: "Obsidian visual graphs: Mapping neural nodes for cognitive research", url: "https://obsidian.md", score: 412, time: Date.now()/1000 - 12000 },
-    { title: "Lively Wallpaper v3 updates hardware metrics collection efficiency", url: "https://livelywallpaper.io", score: 98, time: Date.now()/1000 - 18000 },
-    { title: "Makise Kurisu Live2D model physics improvements completed", url: "https://live2d.com", score: 256, time: Date.now()/1000 - 24000 },
-    { title: "Google Sheets sync limits bypassed with parallel cache fetching", url: "https://sheets.google.com", score: 140, time: Date.now()/1000 - 30000 }
+  const curatedCyberPool = [
+    { title: "Quantum Divergence Field: Real-time coherence measurement in qubit arrays", url: "https://arxiv.org", score: 418, time: Date.now()/1000 - 1800, tag: "ARXIV" },
+    { title: "Neuroscience Breakthrough: Synaptic weight modeling for AGI memory consolidation", url: "https://nature.com", score: 385, time: Date.now()/1000 - 3600, tag: "SCIENCE" },
+    { title: "GraphRAG v2: High-density Obsidian associative neural graphs deployed", url: "https://obsidian.md", score: 342, time: Date.now()/1000 - 7200, tag: "OBSIDIAN" },
+    { title: "Autonomous AGI Skill Distillation: Self-evolving cognitive matrices in production", url: "https://github.com", score: 295, time: Date.now()/1000 - 10800, tag: "GITHUB" },
+    { title: "WebGPU Neural Shaders: Sub-millisecond latency for live interactive visualizers", url: "https://github.com", score: 264, time: Date.now()/1000 - 14400, tag: "SYS_CORE" },
+    { title: "CERN Particle Collider: Micro-black hole detection telemetry confirmed", url: "https://cern.ch", score: 512, time: Date.now()/1000 - 21600, tag: "CERN_LAB" }
   ];
 
   const KURISU_NEWS_LINES = {
     science: [
-      "Interesting. The signal's worth a closer look.",
-      "Now that's a world line worth reading.",
-      "Hmm. The data there isn't entirely random.",
-      "Noted. I'll file that under the lab memos.",
-    ],
-    drama: [
-      "People can be so dramatic. Statistically unnecessary.",
-      "That's going to ruffle a few feathers.",
-      "Trouble on another world line, no doubt.",
+      "Interesting. The divergence measurement is worth a closer look.",
+      "Now that's a world line hypothesis worth investigating.",
+      "Hmm. The cognitive telemetry data isn't entirely random.",
+      "Noted. I'll file that under the Future Gadget lab memos.",
     ],
     tech: [
-      "A new standard? I'll run compatibility tests on that.",
-      "The submonitor says that protocol is still unstable.",
-      "If the docs are correct, that's a genuinely useful fix.",
+      "A new system standard? I'll run kernel compatibility tests.",
+      "The submonitor telemetry says that protocol is stabilizing.",
+      "If the documentation is accurate, that's a genuinely brilliant architecture.",
     ],
     default: [
-      "The submonitor feed just updated.",
-      "I logged that headline. Purely for research.",
+      "World-line intelligence feed synchronized.",
+      "Logged to episodic memory. Purely for laboratory research.",
     ],
   };
 
-  function getDomain(url) {
-    if (!url) return 'self';
+  function getCleanDomainTag(url, title) {
+    if (!url) return 'LAB_MEMO';
     try {
-      const domain = new URL(url).hostname;
-      return domain.startsWith('www.') ? domain.substring(4) : domain;
-    } catch (e) { return 'external'; }
+      const hostname = new URL(url).hostname.toLowerCase();
+      const cleanHost = hostname.startsWith('www.') ? hostname.substring(4) : hostname;
+
+      if (cleanHost.includes('github.com')) return 'GITHUB';
+      if (cleanHost.includes('arxiv.org')) return 'ARXIV';
+      if (cleanHost.includes('openai.com') || cleanHost.includes('anthropic.com') || cleanHost.includes('deepmind') || cleanHost.includes('google.com')) return 'AI_RESEARCH';
+      if (cleanHost.includes('nature.com') || cleanHost.includes('science.org') || cleanHost.includes('sciencedirect')) return 'SCIENCE';
+      if (cleanHost.includes('huggingface.co')) return 'HUGGINGFACE';
+      if (cleanHost.includes('ycombinator.com')) return 'HN_SYNC';
+      if (cleanHost.includes('mit.edu') || cleanHost.includes('stanford.edu') || cleanHost.includes('cern.ch')) return 'ACADEMIA';
+      if (cleanHost.includes('obsidian.md')) return 'OBSIDIAN';
+
+      // Disallow weird TLDs or personal blog domains
+      if (/\.(gay|xyz|top|site|click|online|blog|info|link|ca|is|tv)$/.test(cleanHost) || cleanHost.includes('blogspot') || cleanHost.includes('wordpress')) {
+        const cat = classifyNewsTitle(title);
+        if (cat === 'science') return 'QUANTUM_LAB';
+        if (cat === 'tech') return 'SYSTEM_CORE';
+        return 'TECH_FEED';
+      }
+
+      const parts = cleanHost.split('.');
+      if (parts.length >= 2 && parts[0].length <= 12) {
+        return parts[0].toUpperCase();
+      }
+      return cleanHost.toUpperCase().substring(0, 14);
+    } catch (e) {
+      return 'INTEL_NODE';
+    }
+  }
+
+  function isStoryRelevant(story) {
+    if (!story || !story.title) return false;
+    const title = story.title.toLowerCase();
+
+    const badKeywords = [
+      'tax', 'railway', 'bricked', 'lawsuit', 'fired', 'layoff', 'drama',
+      'dating', 'scam', 'fraud', 'arrest', 'crime', 'murder', 'gossip',
+      'scanner', 'apartment', 'landlord', 'tenant', 'politics', 'election'
+    ];
+
+    const goodKeywords = [
+      'ai', 'llm', 'gpt', 'model', 'neural', 'quantum', 'physics', 'algorithm',
+      'gpu', 'cpu', 'linux', 'rust', 'kernel', 'code', 'database', 'compiler',
+      'memory', 'vector', 'vision', 'robot', 'agent', 'graph', 'distributed',
+      'browser', 'webgl', 'webgpu', 'wasm', 'security', 'crypto', 'protocol', 'network',
+      'astronomy', 'biology', 'neuroscience', 'compute', 'hardware', 'deep learning',
+      'performance', 'vram', 'framework', 'intelligence', 'chip', 'cuda'
+    ];
+
+    const badRes = badKeywords.map(k => new RegExp(String.raw`\b${k}\b`, 'i'));
+    const goodRes = goodKeywords.map(k => new RegExp(String.raw`\b${k}\b`, 'i'));
+    const hasBad = badRes.some(r => r.test(title));
+    const hasGood = goodRes.some(r => r.test(title));
+
+    if (hasBad && !hasGood) return false;
+    return true;
   }
 
   function timeSince(timestamp) {
@@ -59,9 +107,8 @@ window.AMADEUS = window.AMADEUS || {};
 
   function classifyNewsTitle(title) {
     const t = (title || '').toLowerCase();
-    if (/\b(ai|llm|model|research|science|space|quantum|physics|biology|neural|study|paper|theory)\b/.test(t)) return 'science';
-    if (/\b(law|sue|lawsuit|protest|controvers|war|attack|ban|banned|scandal|crash|hack|breach|leak)\b/.test(t)) return 'drama';
-    if (/\b(web|browser|linux|kernel|gpu|cpu|rust|javascript|typescript|sdk|api|framework|cloud|server|startup|funding)\b/.test(t)) return 'tech';
+    if (/\b(ai|llm|model|research|science|space|quantum|physics|biology|neural|study|paper|theory|brain)\b/.test(t)) return 'science';
+    if (/\b(web|browser|linux|kernel|gpu|cpu|vram|rust|javascript|typescript|sdk|api|framework|cloud|server|hardware|chip)\b/.test(t)) return 'tech';
     return 'default';
   }
 
@@ -80,8 +127,7 @@ window.AMADEUS = window.AMADEUS || {};
     if (!candidates.length) return;
 
     let target = candidates.find(item => classifyNewsTitle(item.title) === 'science')
-              || candidates.find(item => classifyNewsTitle(item.title) === 'tech')
-              || candidates.find(item => classifyNewsTitle(item.title) === 'drama');
+              || candidates.find(item => classifyNewsTitle(item.title) === 'tech');
     if (!target) target = candidates[Math.floor(Math.random() * Math.min(candidates.length, 3))];
 
     lastNewsReactionAt = now;
@@ -97,47 +143,112 @@ window.AMADEUS = window.AMADEUS || {};
   }
 
   function toggleFeedMode() {
-    feedMode = (feedMode === 'news') ? 'business' : 'news';
+    if (feedMode === 'news') {
+      feedMode = 'trendshift';
+    } else {
+      feedMode = 'news';
+    }
+
     const feedTag = document.getElementById('feed-tag');
     if (feedTag) {
-      feedTag.textContent = (feedMode === 'business') ? '// BUSINESS_OPS' : '// REALTIME_NEWS_FEED';
+      if (feedMode === 'trendshift') feedTag.textContent = '// TRENDSHIFT_SCOUT';
+      else feedTag.textContent = '// REALTIME_NEWS_FEED';
     }
-    if (feedMode === 'business') {
-      renderBusinessFeed();
+
+    if (feedMode === 'trendshift') {
+      renderTrendshiftFeed();
     } else {
       fetchRealtimeNews();
     }
   }
 
-  function renderBusinessFeed() {
+  async function renderTrendshiftFeed() {
     const container = document.getElementById('news-feed');
     const statusEl = document.getElementById('news-status');
-    if (!container) return;
-    if (statusEl) {
-      statusEl.innerText = 'BIZ_SYNC';
-      statusEl.className = 'pulse-text';
-    }
-    const rev = lastBusinessData ? (lastBusinessData.revenue_thb || 0).toLocaleString() : '0';
-    const orders = lastBusinessData ? (lastBusinessData.orders_count || 0) : '0';
-    const status = (lastBusinessData && lastBusinessData.status === 'online') ? 'CONNECTED' : 'STANDBY';
+    if (!container || !statusEl) return;
 
-    container.innerHTML = `
-      <div class="biz-card">
-        <span>TONPAI_ICE_REVENUE</span>
-        <span class="biz-val">฿ ${rev} THB</span>
-      </div>
-      <div class="biz-card">
-        <span>ORDERS_TODAY</span>
-        <span class="biz-val">${orders} TICKETS</span>
-      </div>
-      <div class="biz-card">
-        <span>LOYVERSE_SYNC</span>
-        <span class="biz-val" style="color:#ff4d55;">${status}</span>
-      </div>
-    `;
+    container.innerHTML = '<div class="news-item"><div class="news-title">Scouting Trendshift weekly repositories...</div></div>';
+    statusEl.innerText = 'SCOUTING';
+    statusEl.className = 'pulse-text';
+
+    try {
+      const brain = window.KURISU_BRAIN || (window.AMADEUS.chat && window.AMADEUS.chat.KURISU_BRAIN) || {};
+      const base = (brain && brain.endpoint) || '';
+      if (!base) throw new Error('No brain endpoint configured');
+      const res = await fetchWithTimeout(`${base}/v1/intel/trendshift`, 5000);
+      if (!res.ok) throw new Error("Brain API unavailable");
+      const data = await res.json();
+      const evals = data.evaluations || [];
+
+      if (!evals.length) throw new Error("No discoveries returned");
+
+      container.innerHTML = '';
+      statusEl.innerText = `DISCOVERIES (${data.high_value_count || 0})`;
+      statusEl.className = 'pulse-text';
+
+      evals.forEach(e => {
+        const item = document.createElement('a');
+        item.className = 'news-item';
+        item.href = e.url || '#';
+        item.target = '_blank';
+        item.rel = 'noopener noreferrer';
+        item.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          try { window.open(e.url, '_blank'); } catch (err) {}
+        });
+
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'news-title';
+        titleDiv.innerText = `${e.name}`;
+
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'news-meta';
+        const score = e.relevance_score || 5;
+        const tag = (score >= 8) ? 'AGI_HIGH_VALUE' : 'GITHUB_TREND';
+        const esc = window.AMADEUS.escapeHtml;
+        metaDiv.innerHTML = `
+          <span class="news-score" style="color:${score >= 8 ? '#00ffcc' : '#ff4d55'};">▲ ${score}/10</span>
+          <span class="news-time">${esc(e.key_innovation ? e.key_innovation.substring(0, 42) + '...' : 'Trending')}</span>
+          <span class="news-domain">[ ${esc(tag)} ]</span>
+        `;
+
+        item.appendChild(titleDiv);
+        item.appendChild(metaDiv);
+        container.appendChild(item);
+      });
+    } catch (err) {
+      console.warn("Trendshift HUD Fetch fallback:", err);
+      container.innerHTML = `
+        <div class="news-item">
+          <div class="news-title">Hermes Agent: Autonomous AGI Matrix</div>
+          <div class="news-meta">
+            <span class="news-score" style="color:#00ffcc;">▲ 8/10</span>
+            <span class="news-time">Self-Evolving Cognitive Core</span>
+            <span class="news-domain">[ AGI_HIGH ]</span>
+          </div>
+        </div>
+        <div class="news-item">
+          <div class="news-title">Learn Claude Code: Interactive CLI Subagents</div>
+          <div class="news-meta">
+            <span class="news-score" style="color:#ff4d55;">▲ 7/10</span>
+            <span class="news-time">Tool-Calling Multi-Agent</span>
+            <span class="news-domain">[ AGENTIC ]</span>
+          </div>
+        </div>
+        <div class="news-item">
+          <div class="news-title">Open Connector: Universal Protocol Gateway</div>
+          <div class="news-meta">
+            <span class="news-score" style="color:#ff9e42;">▲ 5/10</span>
+            <span class="news-time">Distributed Neural Sync</span>
+            <span class="news-domain">[ GATEWAY ]</span>
+          </div>
+        </div>
+      `;
+      statusEl.innerText = 'CACHE_DISCOVERY';
+    }
   }
 
-  async function fetchWithTimeout(url, ms = 8000) {
+  async function fetchWithTimeout(url, ms = 6000) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), ms);
     try {
@@ -155,11 +266,15 @@ window.AMADEUS = window.AMADEUS || {};
       feedTag._bound = true;
       feedTag.addEventListener('click', toggleFeedMode);
     }
-    if (!container || !statusEl) return;
+    if (!container || !statusEl) return true;
 
     if (feedMode === 'business') {
       renderBusinessFeed();
-      return;
+      return true;
+    }
+    if (feedMode === 'trendshift') {
+      renderTrendshiftFeed();
+      return true;
     }
 
     try {
@@ -167,26 +282,41 @@ window.AMADEUS = window.AMADEUS || {};
       if (!topStoriesRes.ok) throw new Error("HN Fetch Failed");
 
       const storyIds = await topStoriesRes.json();
-      const targetStories = storyIds.slice(0, 6);
+      const targetStories = storyIds.slice(0, 15);
 
       const storyPromises = targetStories.map(async (id) => {
         try {
-          const detailRes = await fetchWithTimeout(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, 5000);
+          const detailRes = await fetchWithTimeout(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, 4000);
           if (!detailRes.ok) return null;
           return await detailRes.json();
         } catch (e) { return null; }
       });
 
       const results = await Promise.allSettled(storyPromises);
-      const stories = results.map(r => r.status === 'fulfilled' ? r.value : null);
-      if (!stories.some(Boolean)) throw new Error('No stories fetched');
+      const rawStories = results
+        .filter(r => r.status === 'fulfilled' && r.value && r.value.title)
+        .map(r => r.value);
+
+      // Intelligent filter: keep only relevant science/tech/AI/engineering stories
+      let filteredStories = rawStories.filter(isStoryRelevant);
+
+      // If fewer than 4 relevant stories, top-up with curated cybernetic intelligence
+      if (filteredStories.length < 4) {
+        for (const poolItem of curatedCyberPool) {
+          if (!filteredStories.some(s => s.title === poolItem.title)) {
+            filteredStories.push(poolItem);
+          }
+          if (filteredStories.length >= 5) break;
+        }
+      }
+
+      filteredStories = filteredStories.slice(0, 4);
 
       container.innerHTML = '';
       statusEl.innerText = 'LIVE_SYNC';
       statusEl.className = 'pulse-text';
 
-      stories.forEach(story => {
-        if (!story || !story.title) return;
+      filteredStories.forEach(story => {
         const item = document.createElement('a');
         item.className = 'news-item';
         const targetUrl = story.url || `https://news.ycombinator.com/item?id=${story.id}`;
@@ -205,11 +335,12 @@ window.AMADEUS = window.AMADEUS || {};
         const metaDiv = document.createElement('div');
         metaDiv.className = 'news-meta';
 
-        const domain = getDomain(story.url);
+        const tag = story.tag || getCleanDomainTag(story.url, story.title);
+        const esc = window.AMADEUS.escapeHtml;
         metaDiv.innerHTML = `
           <span class="news-score">▲ ${story.score || 0} pts</span>
           <span class="news-time">posted ${timeSince(story.time)} ago</span>
-          <span class="news-domain">[ ${domain} ]</span>
+          <span class="news-domain">[ ${esc(tag)} ]</span>
         `;
 
         item.appendChild(titleDiv);
@@ -217,20 +348,22 @@ window.AMADEUS = window.AMADEUS || {};
         container.appendChild(item);
       });
 
-      reactToNews(stories);
-      lastNewsStories = stories.filter(Boolean);
+      reactToNews(filteredStories);
+      lastNewsStories = filteredStories;
+      return true;
     } catch (err) {
-      console.warn("AMADEUS News Sync: API offline, falling back to simulated pool.", err);
+      console.warn("AMADEUS News Sync: API offline, loading curated cyber intelligence pool.", err);
       renderFallbackNews(container, statusEl);
+      return false;
     }
   }
 
   function renderFallbackNews(container, statusEl) {
     container.innerHTML = '';
-    statusEl.innerText = 'STANDALONE_SYNC';
+    statusEl.innerText = 'WORLD_LINE_SYNC';
     statusEl.className = 'pulse-text';
 
-    simulatedNewsPool.forEach(story => {
+    curatedCyberPool.forEach(story => {
       const item = document.createElement('a');
       item.className = 'news-item';
       item.href = story.url;
@@ -243,10 +376,11 @@ window.AMADEUS = window.AMADEUS || {};
       const metaDiv = document.createElement('div');
       metaDiv.className = 'news-meta';
 
+      const esc = window.AMADEUS.escapeHtml;
       metaDiv.innerHTML = `
         <span class="news-score">▲ ${story.score} pts</span>
         <span class="news-time">posted ${timeSince(story.time)} ago</span>
-        <span class="news-domain">[ ${getDomain(story.url)} ]</span>
+        <span class="news-domain">[ ${esc(story.tag)} ]</span>
       `;
 
       item.appendChild(titleDiv);
@@ -254,24 +388,45 @@ window.AMADEUS = window.AMADEUS || {};
       container.appendChild(item);
     });
 
-    reactToNews(simulatedNewsPool);
-    lastNewsStories = simulatedNewsPool.slice();
+    reactToNews(curatedCyberPool);
+    lastNewsStories = curatedCyberPool.slice();
   }
 
-  setInterval(() => {
-    const s = window.AMADEUS.state;
-    if (s && !s.isLivelyPaused) fetchRealtimeNews();
-  }, 15 * 60 * 1000);
+  // Self-scheduling fetch loop with exponential backoff: a failed HN fetch
+  // doubles the delay (capped at 1h) instead of hammering a dead API every
+  // 15 minutes; a successful fetch resets the cadence to base.
+  const NEWS_BASE_INTERVAL = 15 * 60 * 1000;
+  const NEWS_MAX_INTERVAL = 60 * 60 * 1000;
+  let newsInterval = NEWS_BASE_INTERVAL;
 
+  function scheduleNewsFetch() {
+    setTimeout(async () => {
+      const s = window.AMADEUS.state;
+      let ok = true;
+      if (s && !s.isLivelyPaused) ok = await fetchRealtimeNews();
+      newsInterval = ok ? NEWS_BASE_INTERVAL : Math.min(NEWS_MAX_INTERVAL, newsInterval * 2);
+      scheduleNewsFetch();
+    }, newsInterval);
+  }
+  scheduleNewsFetch();
+
+  /**
+   * AMADEUS realtime intelligence feed (Hacker News + curated fallback).
+   * @property {() => Promise<boolean>} fetchRealtimeNews - Fetches and renders the live HN feed; resolves true on a live sync, false when the curated fallback pool was rendered (drives backoff).
+   * @property {() => void} toggleFeedMode - Switches the bottom-left panel between news / business / trendshift feeds.
+   * @property {() => void} renderTrendshiftFeed - Renders the Trendshift-style feed variant.
+   * @property {() => Array} getLastStories - The story list backing the current render (for brain context).
+   * @property {(story: {title: string, url?: string}) => boolean} isStoryRelevant - Pure: true when a story fits Kurisu's science/tech interests (no clickbait/politics keywords).
+   * @property {(url?: string, title?: string) => string} getCleanDomainTag - Pure: maps a story URL to a short uppercase source tag (e.g. GITHUB, ARXIV).
+   * @property {(timestamp: number) => string} timeSince - Pure: renders a unix timestamp (seconds) as "42s" / "5m" / "3h".
+   */
   window.AMADEUS.news = {
     fetchRealtimeNews,
     toggleFeedMode,
-    renderBusinessFeed,
-    setBusinessData: (data) => { lastBusinessData = data; if (feedMode === 'business') renderBusinessFeed(); },
+    renderTrendshiftFeed,
     getLastStories: () => lastNewsStories,
+    isStoryRelevant,
+    getCleanDomainTag,
+    timeSince,
   };
-
-  window.fetchRealtimeNews = fetchRealtimeNews;
-  window.toggleFeedMode = toggleFeedMode;
-  window.renderBusinessFeed = renderBusinessFeed;
 })();

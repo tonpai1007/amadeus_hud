@@ -89,7 +89,8 @@ class Live2DController {
                 view: canvas,
                 transparent: true,
                 autoDensity: true,
-                resolution: Math.min(window.devicePixelRatio || 1, 1.25),
+                 resolution: (window.AMADEUS && window.AMADEUS.PERF && window.AMADEUS.PERF.dpr)
+                     || Math.min(window.devicePixelRatio || 1, window.AMADEUS.MAX_DPR || 1.5),
                 resizeTo: window,
             });
 
@@ -101,7 +102,9 @@ class Live2DController {
             } catch (loadErr) {
                 console.warn("[L2D] Relative load failed, attempting local server fallback:", loadErr);
                 if (window.location.protocol === 'file:') {
-                    modelSource = 'http://127.0.0.1:8000/hud/' + this.modelPath;
+                    const brain = window.KURISU_BRAIN || (window.AMADEUS.chat && window.AMADEUS.chat.KURISU_BRAIN) || {};
+                    const base = (brain && brain.endpoint) || '';
+                    modelSource = base ? `${base}/hud/${this.modelPath}` : 'http://127.0.0.1:8000/hud/' + this.modelPath;
                     this.model = await PIXI.live2d.Live2DModel.from(modelSource, {
                         autoInteract: false,
                     });
@@ -170,12 +173,22 @@ class Live2DController {
             }
         }, { passive: true });
 
+        window.addEventListener('wheel', (e) => {
+            if (window.AMADEUS.L2D_INTERACTION) {
+                window.AMADEUS.L2D_INTERACTION.handleWheel(this, e.deltaY);
+            }
+        }, { passive: true });
+
         canvas.addEventListener('pointerdown', (e) => {
             if (this._petMode) {
                 this._dragging = true;
                 this._dragOffset = { x: e.clientX - this.model.x, y: e.clientY - this.model.y };
             } else {
-                this._triggerPokeReaction();
+                if (window.AMADEUS.L2D_INTERACTION) {
+                    window.AMADEUS.L2D_INTERACTION.handleTap(this, e.clientX, e.clientY);
+                } else {
+                    this._triggerPokeReaction();
+                }
             }
         });
 
@@ -194,17 +207,26 @@ class Live2DController {
         });
     }
 
+    interactShadow() {
+        if (window.AMADEUS.L2D_INTERACTION) {
+            window.AMADEUS.L2D_INTERACTION.interactShadow(this);
+        } else {
+            this._triggerPokeReaction();
+        }
+    }
+
     _triggerPokeReaction() {
-        this.setEmotion('surprised', 2500);
-        const lines = [
-            "Hey! Poking me won't make the calculation faster.",
-            "My cheeks are not a physics experiment.",
-            "Statistically, that was unnecessary!",
-            "I'm filing a lab report about your behavior.",
-        ];
-        const line = lines[Math.floor(Math.random() * lines.length)];
-        if (this.onInteract) this.onInteract(line);
-        if (this.onMood) this.onMood(-1);
+        if (window.AMADEUS.L2D_INTERACTION) {
+            window.AMADEUS.L2D_INTERACTION.handleTap(this, window.innerWidth / 2, window.innerHeight * 0.35);
+        } else {
+            this.setEmotion('surprised', 2500);
+            const lines = [
+                "Hey! Poking me won't make the calculation faster.",
+                "My cheeks are not a physics experiment.",
+            ];
+            const line = lines[Math.floor(Math.random() * lines.length)];
+            if (this.onInteract) this.onInteract(line);
+        }
     }
 
     _startRenderLoop() {
@@ -231,6 +253,7 @@ class Live2DController {
             phys.updateHeadSway(this, dt);
             phys.updateIdleEyes(this, dt, now);
             phys.updateBrows(this, dt, now);
+            if (phys.updateMusicMood) phys.updateMusicMood(this, dt);
         }
 
         const emo = window.AMADEUS.L2D_EMOTION;
@@ -387,12 +410,6 @@ class Live2DController {
         this.setEmotion('tired');
     }
 
-    interactShadow() {
-        if (window.AMADEUS.L2D_INTERACTION) {
-            window.AMADEUS.L2D_INTERACTION.interactShadow(this);
-        }
-    }
-
     pause() {
         this._paused = true;
         if (this.app && this.app.ticker) this.app.ticker.stop();
@@ -416,4 +433,5 @@ class Live2DController {
     }
 }
 
-window.Live2DController = Live2DController;
+window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS.Live2DController = Live2DController;

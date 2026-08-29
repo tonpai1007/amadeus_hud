@@ -82,6 +82,13 @@ window.AMADEUS = window.AMADEUS || {};
     ctrl._auraEl.style.background = `radial-gradient(ellipse at 50% 40%, rgba(${aura.r}, ${aura.g}, ${aura.b}, ${finalGlow}) 0%, rgba(${aura.r}, ${aura.g}, ${aura.b}, 0) 70%)`;
   }
 
+  /**
+   * AMADEUS Live2D emotion engine & stage aura.
+   * @property {Object<string, {smile:number, sad:number, angry:number, surprised:number, scared:number, browY:number, browAngle:number}>} EMOTION_PRESETS - Per-emotion blend-shape/parameter presets.
+   * @property {(ctrl: object, emotion: string, holdMs?: number) => void} setEmotion - Sets the active emotion (optionally held against automatic evaluation) and refreshes the aura.
+   * @property {(ctrl: object) => string} evaluateEmotion - Pure-ish: resolves the currently appropriate emotion from hold timers, speech/thinking flags, proximity, audio energy and mood.
+   * @property {(ctrl: object) => void} updateAura - Paints the emotion-tinted radial aura behind the avatar (with flash and proximity boost).
+   */
   window.AMADEUS.L2D_EMOTION = {
     EMOTION_PRESETS,
     setEmotion,

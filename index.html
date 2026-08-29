@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -19,6 +20,7 @@
   <script src="modules/l2d-interaction.js"></script>
   <script src="live2d_controller.js"></script>
 </head>
+
 <body>
   <!-- Now-playing album art backdrop: current track thumbnail, blurred +
        dimmed into the scene (hidden when no music or Ambient BG off) -->
@@ -58,17 +60,29 @@
   <div class="bloom-overlay"></div>
   <!-- Beat pulse: quick red bloom that flashes on the music's kick -->
   <div id="beat-glow"></div>
+  <!-- Screen Co-Pilot Shutter Flash -->
+  <div id="screen-flash" class="screen-flash"></div>
   <!-- Time-of-day color wash: warm at midday, cool at night, driven by the
        --daylight variable set each minute in applyTimeOfDay -->
   <div class="time-tint"></div>
 
   <!-- HUD Interface Wrapper -->
   <div id="hud-container">
-    
+
     <!-- TOP LEFT: Clock & System State -->
     <header class="hud-panel top-left-panel">
       <div class="panel-header">
         <span class="panel-tag">// COGNITIVE_TEMPORAL_RES</span>
+        <button class="pet-toggle" id="pet-toggle" title="Toggle pet mode: drag Kurisu anywhere">
+          <span class="pet-toggle-led"></span>
+          <span class="pet-toggle-label">PET</span>
+          <span class="pet-toggle-state" id="pet-toggle-state">OFF</span>
+        </button>
+        <button class="interact-toggle" id="interact-toggle" title="Toggle interact mode: click on Kurisu to talk">
+          <span class="interact-toggle-led"></span>
+          <span class="interact-toggle-label">TALK</span>
+          <span class="interact-toggle-state" id="interact-toggle-state">OFF</span>
+        </button>
         <span class="status-indicator online">SYSTEM_COHERENT</span>
       </div>
       <div class="panel-body">
@@ -83,20 +97,35 @@
           <span class="clock-tube" data-digit="5">0</span>
         </div>
         <div id="hud-date">YYYY.MM.DD</div>
+        <div class="divergence-meter-wrap" title="Divergence Meter (Click to recalculate worldline)">
+          <canvas id="divergence-canvas"></canvas>
+        </div>
         <div class="system-alerts">
-          <span class="alert-item"><span class="bullet"></span> KERNEL: ACTIVE_SYNC</span>
-          <span class="alert-item"><span class="bullet"></span> UPLINK: LIVE_FEED</span>
+          <span class="alert-item" id="hud-kernel"><span class="bullet"></span> KERNEL: ACTIVE_SYNC</span>
+          <span class="alert-item" id="hud-uplink"><span class="bullet"></span> UPLINK: LIVE_FEED</span>
+          <span class="alert-item" id="hud-divergence" style="display:none"><span class="bullet"></span> DIV: 0.000000</span>
         </div>
         <div class="now-playing" id="now-playing">
-          <span class="np-label">// NOW_PLAYING</span>
-          <span class="np-track" id="now-playing-track">AUDIO_FEED_IDLE</span>
-          <span class="np-artist" id="now-playing-artist"></span>
+          <div class="np-header">
+            <span class="np-label">// NOW_PLAYING</span>
+            <span class="np-status-led"></span>
+          </div>
+          <div class="np-track" id="now-playing-track">AUDIO_FEED_IDLE</div>
+          <div class="np-artist" id="now-playing-artist"></div>
+          <div class="media-controls-row">
+            <button class="media-btn" id="media-prev" data-media-act="previous" title="Previous Track" aria-label="Previous Track">|◀</button>
+            <button class="media-btn media-play-btn" id="media-play-pause" data-media-act="play_pause"
+              title="Play/Pause" aria-label="Play/Pause">▶</button>
+            <button class="media-btn" id="media-next" data-media-act="next" title="Next Track" aria-label="Next Track">▶|</button>
+            <div class="media-vol-group">
+              <button class="media-btn media-vol-btn" id="media-vol-down" data-media-act="volume_down"
+                title="Volume Down" aria-label="Volume Down">-</button>
+              <span class="media-vol-icon" aria-hidden="true">🔊</span>
+              <button class="media-btn media-vol-btn" id="media-vol-up" data-media-act="volume_up"
+                title="Volume Up" aria-label="Volume Up">+</button>
+            </div>
+          </div>
         </div>
-        <button class="pet-toggle" id="pet-toggle" title="Toggle pet mode: drag Kurisu anywhere">
-          <span class="pet-toggle-led"></span>
-          <span class="pet-toggle-label">PET_MODE</span>
-          <span class="pet-toggle-state" id="pet-toggle-state">OFF</span>
-        </button>
       </div>
     </header>
 
@@ -120,7 +149,8 @@
     <!-- BOTTOM LEFT: Live News Feed & Business Ops -->
     <section class="hud-panel bottom-left-panel">
       <div class="panel-header">
-        <span class="panel-tag feed-toggle" id="feed-tag" style="cursor:pointer;" title="Click to toggle News / Business Ops">// REALTIME_NEWS_FEED</span>
+        <span class="panel-tag feed-toggle" id="feed-tag" 
+          title="Click to toggle News / Business Ops">// REALTIME_NEWS_FEED</span>
         <span class="pulse-text" id="news-status">LIVE_SYNC</span>
       </div>
       <div class="panel-body news-panel-body">
@@ -130,59 +160,133 @@
       </div>
     </section>
 
-    <!-- BOTTOM CENTER: Kurisu Chat Terminal (transcript log + live input) -->
-    <section class="hud-panel chat-panel" id="chat-panel">
-      <div class="panel-header">
-        <span class="panel-tag">// AMADEUS_TERMINAL</span>
-        <span class="pulse-text chat-uplink" id="chat-uplink">UPLINK: CHECK</span>
-      </div>
-      <div class="chat-log" id="chat-log"></div>
-      <div class="chat-input-row">
-        <button class="chat-mic" id="chat-mic" type="button" title="Push to talk (Ctrl+Shift+M)">🎙️</button>
-        <input class="chat-input" id="kurisu-input" type="text"
-               placeholder="> transmit to Kurisu... [Enter]" autocomplete="off" spellcheck="false">
-        <button class="chat-send" id="chat-send" type="button">SEND</button>
-      </div>
-    </section>
+    <!-- RIGHT STACK: Chat + Task Matrix + System Options -->
+    <div class="right-stack">
+      <!-- BOTTOM CENTER: Kurisu Chat Terminal (transcript log + live input) -->
+      <section class="hud-panel chat-panel" id="chat-panel">
+        <div class="panel-header">
+          <span class="panel-tag">// AMADEUS_TERMINAL</span>
+          <span class="pulse-text chat-uplink" id="chat-uplink">UPLINK: CHECK</span>
+        </div>
+        <div class="chat-log" id="chat-log"></div>
+        <div class="chat-input-row">
+          <button class="chat-mic" id="chat-mic" aria-label="Push to talk" type="button" title="Push to talk (Ctrl+Shift+M)">🎙️</button>
+          <input class="chat-input" id="kurisu-input" type="text" placeholder="> transmit to Kurisu... [Enter]"
+            autocomplete="off" spellcheck="false" aria-label="Transmit message to Kurisu">
+          <button class="chat-send" id="chat-send" type="button">SEND</button>
+        </div>
+      </section>
 
-    <!-- BOTTOM RIGHT: System Options (settings panel) -->
-    <section class="hud-panel settings-panel" id="settings-panel">
-      <div class="panel-header settings-header" id="settings-toggle">
-        <span class="panel-tag">// SYSTEM_OPTS</span>
-        <span class="pulse-text" id="settings-state">EXPAND</span>
+      <!-- RIGHT CENTER: Obsidian Daily Task Matrix -->
+      <section class="hud-panel task-widget-panel" id="task-widget-panel">
+        <div class="panel-header task-widget-header" id="task-widget-header"
+          title="Toggle Task Matrix (Ctrl+T)">
+          <span class="panel-tag">// OBSIDIAN_TASK_MATRIX</span>
+          <span class="pulse-text" id="task-badge">0/0 DONE</span>
+          <span class="task-toggle-state" id="task-toggle-state">COLLAPSE</span>
+        </div>
+        <div class="task-widget-body" id="task-widget-body">
+          <div class="task-meta-row">
+            <span class="task-meta-label">DAILY_OBJECTIVES</span>
+            <button class="para-organize-btn" id="para-organize-btn" type="button" title="Auto-organize 00_Inbox via PARA" >⚡ PARA SYNC</button>
+            <span class="task-meta-count" id="task-count">[0%]</span>
+          </div>
+          <div class="task-list" id="task-list"></div>
+          <div class="task-input-row">
+            <input type="text" id="task-new-input" class="task-new-input" placeholder="+ Add daily task... [Enter]" aria-label="Add daily task"
+              spellcheck="false">
+            <button id="task-new-btn" class="task-new-btn">+</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- BOTTOM RIGHT: System Options (settings panel) -->
+      <section class="hud-panel settings-panel" id="settings-panel">
+        <div class="panel-header settings-header" id="settings-toggle">
+          <span class="panel-tag">// SYSTEM_OPTS</span>
+          <span class="pulse-text" id="settings-state">EXPAND</span>
+        </div>
+        <div class="settings-body" id="settings-body" style="display: none;">
+          <div class="settings-group">
+            <div class="settings-title">DISPLAY</div>
+            <label class="setting-row"><span>Oscilloscope</span><input type="checkbox" data-widget="scope"
+                checked></label>
+            <label class="setting-row"><span>News Feed</span><input type="checkbox" data-widget="news" checked></label>
+            <label class="setting-row"><span>Clock + Alerts</span><input type="checkbox" data-widget="clock"
+                checked></label>
+            <label class="setting-row"><span>Audio Ring</span><input type="checkbox" data-widget="ring" checked></label>
+            <label class="setting-row"><span>Chat Terminal</span><input type="checkbox" data-widget="chat"
+                checked></label>
+            <label class="setting-row"><span>CRT / Vignette</span><input type="checkbox" data-widget="crt"
+                checked></label>
+            <label class="setting-row"><span>Ambient BG</span><input type="checkbox" data-widget="bg" checked></label>
+            <label class="setting-row"><span>Terminal SFX</span><input type="checkbox" id="setting-sfx" checked></label>
+            <label class="setting-row"><span>PET_MODE</span><input type="checkbox" id="setting-pet" checked></label>
+            <label class="setting-row"><span>Voice Replies</span><input type="checkbox" id="setting-voice"
+                checked></label>
+          </div>
+          <div class="settings-group">
+            <div class="settings-title">KURISU</div>
+            <label class="setting-row"><span>Idle Gestures</span><input type="checkbox" data-feature="idleGestures"
+                checked></label>
+            <label class="setting-row"><span>Ambient Motions</span><input type="checkbox" data-feature="ambientMotions"
+                checked></label>
+            <label class="setting-row"><span>Easter Eggs</span><input type="checkbox" data-feature="easterEggs"
+                checked></label>
+            <label class="setting-row"><span>News Reactions</span><input type="checkbox" data-feature="newsReactions"
+                checked></label>
+            <label class="setting-row"><span>Music Mood</span><input type="checkbox" data-feature="musicMood"
+                checked></label>
+            <label class="setting-row"><span>Posture Fatigue</span><input type="checkbox" data-feature="postureFatigue"
+                checked></label>
+          </div>
+          <div class="settings-group">
+            <div class="settings-title">OSCILLOSCOPE</div>
+            <label class="setting-row"><span>Speed</span><input type="range" id="scope-speed" min="1" max="10" step="1"
+                value="5"></label>
+            <label class="setting-row"><span>Density</span><input type="range" id="scope-density" min="1" max="10"
+                step="1" value="5"></label>
+            <label class="setting-row"><span>Sound Color</span><input type="color" id="scope-ch1" value="#ff4d55"></label>
+            <label class="setting-row"><span>Brain Color</span><input type="color" id="scope-ch2" value="#ff55aa"></label>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- KEYBOARD SHORTCUTS MATRIX MODAL (Ctrl+/) -->
+    <div id="keybind-overlay" class="keybind-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="keybind-title">
+      <div class="keybind-modal">
+        <div class="keybind-header">
+          <span class="keybind-title">// AMADEUS SYSTEM — SHORTCUT MATRIX</span>
+          <button id="keybind-close" aria-label="Close shortcut matrix" class="keybind-close" title="Close [ESC]">✕</button>
+        </div>
+        <div class="keybind-grid">
+          <div class="keybind-sec">
+            <div class="keybind-sec-title">INTERACTIONS & CHAT</div>
+            <div class="keybind-row"><kbd>Enter</kbd><span>Transmit text to Kurisu</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>M</kbd><span>Push to Talk (Microphone
+                STT)</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd><span>Screen Co-Pilot Vision
+                Inspect</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>X</kbd><span>Wipe chat logs &
+                history</span></div>
+            <div class="keybind-row"><kbd>Escape</kbd><span>Clear input / dismiss bubble</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>/</kbd><span>Toggle this shortcut matrix</span></div>
+          </div>
+          <div class="keybind-sec">
+            <div class="keybind-sec-title">DESKTOP GESTURES & HUD</div>
+            <div class="keybind-row"><kbd>Click Avatar</kbd><span>Poke Kurisu for reaction line</span></div>
+            <div class="keybind-row"><kbd>Click Meter</kbd><span>Recalculate Worldline Divergence</span></div>
+            <div class="keybind-row"><kbd>Click Tag</kbd><span>Toggle News / Business Ops Feed</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>T</kbd><span>Toggle Obsidian Task Matrix</span></div>
+            <div class="keybind-row"><kbd>PET_MODE</kbd><span>Drag Kurisu anywhere on desktop</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd><span>Toggle Live2D debug
+                inspector</span></div>
+          </div>
+        </div>
+        <div class="keybind-footer">Press <kbd>ESC</kbd> or click outside to dismiss</div>
       </div>
-      <div class="settings-body" id="settings-body" style="display: none;">
-        <div class="settings-group">
-          <div class="settings-title">DISPLAY</div>
-          <label class="setting-row"><span>Oscilloscope</span><input type="checkbox" data-widget="scope" checked></label>
-          <label class="setting-row"><span>News Feed</span><input type="checkbox" data-widget="news" checked></label>
-          <label class="setting-row"><span>Clock + Alerts</span><input type="checkbox" data-widget="clock" checked></label>
-          <label class="setting-row"><span>Audio Ring</span><input type="checkbox" data-widget="ring" checked></label>
-          <label class="setting-row"><span>Chat Terminal</span><input type="checkbox" data-widget="chat" checked></label>
-          <label class="setting-row"><span>CRT / Vignette</span><input type="checkbox" data-widget="crt" checked></label>
-          <label class="setting-row"><span>Ambient BG</span><input type="checkbox" data-widget="bg" checked></label>
-          <label class="setting-row"><span>Terminal SFX</span><input type="checkbox" id="setting-sfx" checked></label>
-          <label class="setting-row"><span>PET_MODE</span><input type="checkbox" id="setting-pet" checked></label>
-          <label class="setting-row"><span>Voice Replies</span><input type="checkbox" id="setting-voice" checked></label>
-        </div>
-        <div class="settings-group">
-          <div class="settings-title">KURISU</div>
-          <label class="setting-row"><span>Idle Gestures</span><input type="checkbox" data-feature="idleGestures" checked></label>
-          <label class="setting-row"><span>Ambient Motions</span><input type="checkbox" data-feature="ambientMotions" checked></label>
-          <label class="setting-row"><span>Easter Eggs</span><input type="checkbox" data-feature="easterEggs" checked></label>
-          <label class="setting-row"><span>News Reactions</span><input type="checkbox" data-feature="newsReactions" checked></label>
-          <label class="setting-row"><span>Music Mood</span><input type="checkbox" data-feature="musicMood" checked></label>
-          <label class="setting-row"><span>Posture Fatigue</span><input type="checkbox" data-feature="postureFatigue" checked></label>
-        </div>
-        <div class="settings-group">
-          <div class="settings-title">OSCILLOSCOPE</div>
-          <label class="setting-row"><span>Speed</span><input type="range" id="scope-speed" min="1" max="10" step="1" value="5"></label>
-          <label class="setting-row"><span>Density</span><input type="range" id="scope-density" min="1" max="10" step="1" value="5"></label>
-          <label class="setting-row"><span>Sound Color</span><input type="color" id="scope-ch1" value="#ff4d55"></label>
-          <label class="setting-row"><span>Brain Color</span><input type="color" id="scope-ch2" value="#ff55aa"></label>
-        </div>
-      </div>
-    </section>
+    </div>
 
   </div>
 
@@ -193,17 +297,25 @@
   <script src="modules/sfx.js"></script>
   <script src="modules/tts.js"></script>
   <script src="modules/clock.js"></script>
+  <script src="modules/weather.js"></script>
+  <script src="modules/divergence.js"></script>
   <script src="modules/oscilloscope.js"></script>
   <script src="modules/audio-ring.js"></script>
   <script src="modules/background.js"></script>
   <script src="modules/mood.js"></script>
   <script src="modules/bubble.js"></script>
   <script src="modules/news.js"></script>
-  <script src="modules/chat.js"></script>
+  <script src="modules/chat-history.js"></script>
+  <script src="modules/chat-api.js"></script>
+  <script src="modules/chat-ui.js"></script>
+  <script src="modules/speech-input.js"></script>
   <script src="modules/settings.js"></script>
   <script src="modules/power.js"></script>
   <script src="modules/uplink.js"></script>
   <script src="modules/lively.js"></script>
+  <script src="modules/task-widget.js"></script>
+  <script src="modules/media-player.js"></script>
   <script src="wallpaper.js"></script>
 </body>
+
 </html>

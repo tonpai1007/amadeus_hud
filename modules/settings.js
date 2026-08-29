@@ -5,7 +5,11 @@ window.AMADEUS = window.AMADEUS || {};
   const PET_MODE_KEY = 'amadeus.petMode';
   const PET_POS_KEY = 'amadeus.petPos';
   let petApply = null;
-  let SETTINGS = window.AMADEUS.SETTINGS_DEFAULTS;
+  let pendingPetMode = null;
+  let SETTINGS = window.AMADEUS.SETTINGS_DEFAULTS
+    ? JSON.parse(JSON.stringify(window.AMADEUS.SETTINGS_DEFAULTS))
+    : {};
+  window.AMADEUS.SETTINGS = SETTINGS;
 
   function loadSettings() {
     const base = JSON.parse(JSON.stringify(window.AMADEUS.SETTINGS_DEFAULTS));
@@ -21,8 +25,16 @@ window.AMADEUS = window.AMADEUS || {};
       }
     } catch (e) { /* ignore */ }
 
-    if (/^(#)?39ff7a$/i.test(base.scope.ch1 || '')) base.scope.ch1 = '#ff4d55';
-    if (/^(#)?b388ff$/i.test(base.scope.ch2 || '')) base.scope.ch2 = '#ff55aa';
+    // One-shot legacy palette migration (old green/violet -> Amadeus red).
+    // Gated behind a localStorage flag so a deliberately chosen legacy color
+    // isn't silently reset on every load.
+    let colorMigrated = false;
+    try { colorMigrated = localStorage.getItem('amadeus.colorMigrationV1') === '1'; } catch (e) { /* ignore */ }
+    if (!colorMigrated) {
+      if (/^(#)?39ff7a$/i.test(base.scope.ch1 || '')) base.scope.ch1 = '#ff4d55';
+      if (/^(#)?b388ff$/i.test(base.scope.ch2 || '')) base.scope.ch2 = '#ff55aa';
+      try { localStorage.setItem('amadeus.colorMigrationV1', '1'); } catch (e) { /* ignore */ }
+    }
     return base;
   }
 
@@ -36,6 +48,41 @@ window.AMADEUS = window.AMADEUS || {};
     if (!SETTINGS || !SETTINGS.features) return;
     for (const name of Object.keys(SETTINGS.features)) {
       l2d.setFeature(name, SETTINGS.features[name] !== false);
+    }
+  }
+
+  const INTERACT_MODE_KEY = 'amadeus.interactMode';
+
+  function initInteractMode() {
+    const toggle = document.getElementById('interact-toggle');
+    const stateEl = document.getElementById('interact-toggle-state');
+    const canvas = document.getElementById('live2d-canvas');
+
+    const updateUI = () => {
+      const on = canvas && canvas.classList.contains('interact-mode');
+      document.body.classList.toggle('interact-mode', on);
+      if (toggle) toggle.classList.toggle('active', on);
+      if (stateEl) stateEl.innerText = on ? 'ON' : 'OFF';
+    };
+
+    const apply = (on) => {
+      if (canvas) canvas.classList.toggle('interact-mode', on);
+      document.body.classList.toggle('interact-mode', on);
+      try { localStorage.setItem(INTERACT_MODE_KEY, on ? '1' : '0'); } catch (e) { /* ignore */ }
+      updateUI();
+    };
+
+    try {
+      if (localStorage.getItem(INTERACT_MODE_KEY) === '1') apply(true);
+    } catch (e) { /* ignore */ }
+
+    if (toggle) {
+      toggle.addEventListener('pointerdown', (e) => e.stopPropagation());
+      toggle.addEventListener('click', () => {
+        if (window.AMADEUS.sfx) window.AMADEUS.sfx.playBeepSound();
+        const isOn = canvas && canvas.classList.contains('interact-mode');
+        apply(!isOn);
+      });
     }
   }
 
@@ -73,6 +120,10 @@ window.AMADEUS = window.AMADEUS || {};
       if (SETTINGS) SETTINGS.pet = on;
     };
     petApply = apply;
+    if (pendingPetMode !== null) {
+      apply(pendingPetMode);
+      pendingPetMode = null;
+    }
 
     if (toggle) {
       toggle.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -206,20 +257,24 @@ window.AMADEUS = window.AMADEUS || {};
     });
   }
 
+  /**
+   * AMADEUS settings & pet mode controller.
+   * @property {() => object} loadSettings - Deep-clones SETTINGS_DEFAULTS, merges persisted overrides, runs the one-shot legacy color migration.
+   * @property {() => void} saveSettings - Persists the current settings object to localStorage.
+   * @property {() => void} initSettings - Reads settings, binds the settings panel inputs and widget toggles.
+   * @property {() => void} initPetMode - Binds the PET toggle and drag persistence for pet mode.
+   * @property {() => void} pushFeaturesToController - Pushes the feature-flag object into the Live2D controller.
+   * @property {(on: boolean) => void} petApply - Turns pet mode (draggable avatar) on/off.
+   * @property {() => object} getSettings - Live settings reference.
+   */
   window.AMADEUS.settings = {
     loadSettings,
     saveSettings,
     initSettings,
     initPetMode,
+    initInteractMode,
     pushFeaturesToController,
-    petApply: (on) => { if (petApply) petApply(on); },
+    petApply: (on) => { if (petApply) petApply(on); else pendingPetMode = on; },
     getSettings: () => SETTINGS,
   };
-
-  window.SETTINGS = SETTINGS;
-  window.loadSettings = loadSettings;
-  window.saveSettings = saveSettings;
-  window.initSettings = initSettings;
-  window.initPetMode = initPetMode;
-  window.pushFeaturesToController = pushFeaturesToController;
 })();
