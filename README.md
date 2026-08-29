@@ -58,7 +58,7 @@ Kurisu's replies use the first available tier, in order:
 3. **Ollama** (local, offline). Disabled by default to save RAM — flip `useOllama` to `true` in `modules/chat-api.js` to enable a fallback server at `http://localhost:11434`.
 4. **Canned replies** — offline Steins;Gate-flavored fallback pool.
 
-> **Mood-aware brain context:** every reply to tiers 0–3 appends a live `[Current state]` block to the system prompt — her persistent mood, time of day, music energy, live emotion, today's top story, and desk-session length — so the brain answers in character with her actual disposition instead of a static persona (`buildKurisuContext()` in `wallpaper.js`).
+> **Mood-aware brain context:** every reply to tiers 0–3 appends a live `[Current state]` block to the system prompt — her persistent mood, time of day, music energy, live emotion, today's top story, and desk-session length — so the brain answers in character with her actual disposition instead of a static persona (`buildKurisuContext()` in `modules/chat-api.js`).
 
 > **Security:** `openrouter-key.js` and `brain-key.js` are gitignored and untracked — never commit real API keys. The brain key gates a localhost-only API; change it from any default value before ever exposing the brain server beyond `127.0.0.1`.
 
@@ -70,6 +70,7 @@ Vanilla JS with no build step. `index.html` loads ~30 small modules that communi
 - `modules/chat-history.js` / `chat-api.js` / `chat-ui.js` / `speech-input.js` — chat split by concern: persistence, API tiers (Brain → OpenRouter → Ollama → canned) + spontaneous thoughts, input handling, and push-to-talk STT.
 - `modules/power.js` — idle/sleep watchdog, adaptive performance governor, debug overlay (`Ctrl+Shift+D`), time-of-day ambience.
 - `modules/uplink.js` / `modules/lively.js` — WebSocket telemetry clients to the AMADEUS Brain server, with pings + staleness-based reconnect.
+- `modules/weather.js` / `task-widget.js` / `media-player.js` / `divergence.js` / `news.js` / `clock.js` / `settings.js` / `mood.js` — the ambient HUD subsystems: wttr.in weather, Obsidian PARA task matrix, system media playback, world-line divergence telemetry, HN feed, nixie clock, panel settings, and the persistent mood/tint engine.
 - `wallpaper.js` — orchestrator: module init, phase-scheduled visual loop, Lively bootstrap/fallback, and an interval registry for cleanup.
 
 Settings persist to `localStorage`; Lively-native settings come from `LivelyProperties.json` and are validated in `modules/lively.js`.
@@ -80,7 +81,7 @@ Dev tooling is Node-only (`npm install` once; the wallpaper itself has zero runt
 
 ```sh
 npm install        # installs esbuild (dev-only)
-npm test           # 17 unit tests for the pure functions (node:test, no deps)
+npm test           # 36 unit + smoke tests (node:test, no deps; incl. compile, DOM-id, encoding guards)
 npm run build      # minified release copy in dist/
 ```
 
@@ -106,9 +107,11 @@ npm run build      # minified release copy in dist/
 | --- | --- |
 | `index.html` | HUD markup (clock, oscilloscope, news feed, speech bubble) |
 | `style.css` | Theme, panels, animations, idle/reduced-motion handling |
-| `wallpaper.js` | Core logic: oscilloscope, audio ring, chat, emotion engine, idle power-saving, news feed, Lively API hooks, feature toggles |
+| `wallpaper.js` | Orchestrator: module init, phase-scheduled visual loop, Lively bootstrap/fallback, interval registry |
 | `live2d_controller.js` | Live2D character controller: lifelike animation loop, emotion engine, proximity awareness, mouse tracking, parameter smoothing, audio-reactive physics, texture LOD switching, per-feature runtime gates |
 | `lib/`, `live2d/` | PixiJS, Live2D Cubism SDK, and the Kurisu model assets |
+| `modules/` | ~30 small subsystems (chat, weather, tasks, media, power, mood, telemetry…) communicating via `window.AMADEUS` |
+| `tests/run-tests.mjs` | Zero-dependency `node:test` suite — unit tests + compile / DOM-id / encoding smoke guards |
 | `openrouter-key.js`, `brain-key.js` | Local-only API key placeholders (gitignored) |
 | `LivelyInfo.json` | Lively Wallpaper metadata and launch arguments |
 
