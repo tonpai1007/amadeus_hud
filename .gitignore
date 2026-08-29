@@ -18,3 +18,8 @@ Desktop.ini
 # Secrets (never commit API keys)
 openrouter-key.js
 brain-key.js
+
+# Node / build tooling
+node_modules/
+dist/
+
