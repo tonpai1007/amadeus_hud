@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/power.js - AMADEUS Power Governor, Idle/Sleep Watchdog, & Time-of-Day
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   const IDLE_THRESHOLD_MS = 8000;

@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/l2d-emotion.js - AMADEUS Live2D Emotion Engine & Stage Aura
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   const EMOTION_PRESETS = {

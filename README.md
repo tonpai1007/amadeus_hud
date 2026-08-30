@@ -38,8 +38,9 @@ Interactive, sound-reactive Live2D wallpaper starring Makise Kurisu (Steins;Gate
 ## Install
 
 1. Install [Lively Wallpaper](https://rocksdanister.github.io/lively/).
-2. Add a wallpaper from the folder containing this project (the folder with `index.html` and `LivelyInfo.json`), or open `index.html` directly in a browser to preview.
-3. For full features Lively launches the wallpaper with `--audio --pause-event --system-nowplaying` (already declared in `LivelyInfo.json`).
+2. First time (or after a fresh clone): `npm install && npm run build` — generates `src/` (the JS the source `index.html` loads) and `dist/` (minified release).
+3. Add a wallpaper from the folder containing this project (the folder with `index.html` and `LivelyInfo.json`), or open `index.html` directly in a browser to preview. For a self-contained install, point Lively at `dist/index.html` instead.
+4. For full features Lively launches the wallpaper with `--audio --pause-event --system-nowplaying` (already declared in `LivelyInfo.json`).
 
 ## Chat / Brain setup (optional)
 
@@ -64,28 +65,30 @@ Kurisu's replies use the first available tier, in order:
 
 ## Architecture
 
-Vanilla JS with no build step. `index.html` loads ~30 small modules that communicate through the `window.AMADEUS` namespace (no stray globals — the only top-level `window.*` exports are the four `lively*Listener` callbacks required by Lively's C# host):
+TypeScript sources (ES2020, zero runtime dependencies) transpiled by esbuild. `index.html` loads the compiled modules from `src/` (unminified dev output), and everything communicates through the `window.AMADEUS` namespace (no stray globals — the only top-level `window.*` exports are the four `lively*Listener` callbacks required by Lively's C# host):
 
-- `modules/state.js` — shared runtime state, perf profiles, the `brainClient` URL/key helper, and the single master `requestAnimationFrame` ticker that all visual subsystems subscribe to (`AMADEUS.onMasterTick`). Also provides `createWsHeartbeat` for keep-alive/staleness detection on the WebSocket clients.
-- `modules/chat-history.js` / `chat-api.js` / `chat-ui.js` / `speech-input.js` — chat split by concern: persistence, API tiers (Brain → OpenRouter → Ollama → canned) + spontaneous thoughts, input handling, and push-to-talk STT.
-- `modules/power.js` — idle/sleep watchdog, adaptive performance governor, debug overlay (`Ctrl+Shift+D`), time-of-day ambience.
-- `modules/uplink.js` / `modules/lively.js` — WebSocket telemetry clients to the AMADEUS Brain server, with pings + staleness-based reconnect.
-- `modules/weather.js` / `task-widget.js` / `media-player.js` / `divergence.js` / `news.js` / `clock.js` / `settings.js` / `mood.js` — the ambient HUD subsystems: wttr.in weather, Obsidian PARA task matrix, system media playback, world-line divergence telemetry, HN feed, nixie clock, panel settings, and the persistent mood/tint engine.
-- `wallpaper.js` — orchestrator: module init, phase-scheduled visual loop, Lively bootstrap/fallback, and an interval registry for cleanup.
+- `modules/state.ts` — shared runtime state, perf profiles, the `brainClient` URL/key helper, and the single master `requestAnimationFrame` ticker that all visual subsystems subscribe to (`AMADEUS.onMasterTick`). Also provides `createWsHeartbeat` for keep-alive/staleness detection on the WebSocket clients.
+- `modules/chat-history.ts` / `chat-api.ts` / `chat-ui.ts` / `speech-input.ts` — chat split by concern: persistence, API tiers (Brain → OpenRouter → Ollama → canned) + spontaneous thoughts, input handling, and push-to-talk STT.
+- `modules/power.ts` — idle/sleep watchdog, adaptive performance governor, debug overlay (`Ctrl+Shift+D`), time-of-day ambience.
+- `modules/uplink.ts` / `modules/lively.ts` — WebSocket telemetry clients to the AMADEUS Brain server, with pings + staleness-based reconnect.
+- `modules/weather.ts` / `task-widget.ts` / `media-player.ts` / `divergence.ts` / `news.ts` / `clock.ts` / `settings.ts` / `mood.ts` — the ambient HUD subsystems: wttr.in weather, Obsidian PARA task matrix, system media playback, world-line divergence telemetry, HN feed, nixie clock, panel settings, and the persistent mood/tint engine.
+- `wallpaper.ts` — orchestrator: module init, phase-scheduled visual loop, Lively bootstrap/fallback, and an interval registry for cleanup.
 
-Settings persist to `localStorage`; Lively-native settings come from `LivelyProperties.json` and are validated in `modules/lively.js`.
+Settings persist to `localStorage`; Lively-native settings come from `LivelyProperties.json` and are validated in `modules/lively.ts`.
 
 ## Build & Test
 
 Dev tooling is Node-only (`npm install` once; the wallpaper itself has zero runtime dependencies):
 
 ```sh
-npm install        # installs esbuild (dev-only)
-npm test           # 36 unit + smoke tests (node:test, no deps; incl. compile, DOM-id, encoding guards)
-npm run build      # minified release copy in dist/
+npm install        # installs esbuild + typescript (dev-only)
+npm test           # 41 unit + smoke tests (node:test, no deps; incl. compile, DOM-id, encoding guards)
+npm run typecheck  # type-check the TypeScript source tree (tsc --noEmit)
+npm run build      # transpile .ts -> src/ (dev) and minified dist/ release
+npm run watch      # rebuild src/ + dist/ on every .ts/.css save
 ```
 
-`npm run build` produces a self-contained `dist/` you can zip or point Lively at directly: same relative paths, all first-party JS/CSS minified (~44% smaller), vendor bundles and Live2D assets copied verbatim. **Secrets never ship** — `brain-key.js` / `openrouter-key.js` are excluded and their `<script>` tags stripped; the chat tier degrades gracefully without them.
+`npm run build` transpiles every TypeScript source into unminified `src/` — what the source `index.html` loads in a plain browser preview — then produces the minified, self-contained `dist/` you can zip or point Lively at directly: same relative paths, all first-party JS/CSS minified with source maps, vendor bundles and Live2D assets copied verbatim. **Secrets never ship** — `brain-key.js` / `openrouter-key.js` are excluded and their `<script>` tags stripped, and a post-build scan fails the build if any compiled JS dynamically imports them; without the keys the chat tier degrades gracefully.
 
 ## Interactions
 

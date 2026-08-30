@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/task-widget.js - Holographic Obsidian Task Tracker & Checklist for AMADEUS HUD
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   const STORAGE_KEY = 'amadeus_obsidian_tasks_cache_v1';
@@ -105,10 +106,12 @@ window.AMADEUS = window.AMADEUS || {};
     // Wire clicks
     listEl.querySelectorAll('.task-chk').forEach(chk => {
       chk.addEventListener('change', (e) => {
-        const id = Number.parseInt(e.target.dataset.id, 10);
+        const tgt = e.target as HTMLElement | null;
+        const id = Number.parseInt(tgt?.dataset?.id || '0', 10);
         const task = tasks.find(x => x.id === id);
         if (task) {
-          task.completed = e.target.checked;
+          const chkTgt = e.target as HTMLInputElement | null;
+          task.completed = !!chkTgt?.checked;
           window.AMADEUS?.sfx?.playPokeSound?.();
           if (task.completed) {
             window.AMADEUS?.state?.live2DController?.setEmotion?.('happy', 4000);
@@ -121,7 +124,8 @@ window.AMADEUS = window.AMADEUS || {};
 
     listEl.querySelectorAll('.task-del').forEach(btn => {
       btn.addEventListener('click', (e) => {
-        const id = Number.parseInt(e.target.dataset.id, 10);
+        const tgt = e.target as HTMLElement | null;
+        const id = Number.parseInt(tgt?.dataset?.id || '0', 10);
         const task = tasks.find(x => x.id === id);
         tasks = tasks.filter(x => x.id !== id);
         saveTasks();
@@ -155,7 +159,7 @@ window.AMADEUS = window.AMADEUS || {};
     fetchBrainTasks();
 
     const header = document.getElementById('task-widget-header');
-    const input = document.getElementById('task-new-input');
+    const input = document.getElementById('task-new-input') as HTMLInputElement | null;
     const addBtn = document.getElementById('task-new-btn');
 
     if (header) header.addEventListener('click', toggleWidget);
@@ -188,7 +192,8 @@ window.AMADEUS = window.AMADEUS || {};
     // Hotkey: Ctrl+Shift+T or Ctrl+T to toggle
     window.addEventListener('keydown', (e) => {
       if ((e.ctrlKey && e.shiftKey && (e.key === 'T' || e.key === 't')) || (e.ctrlKey && (e.key === 't' || e.key === 'T') && !e.altKey)) {
-        const inField = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
+        const tgtEl = e.target as HTMLElement | null;
+        const inField = tgtEl && (tgtEl.tagName === 'INPUT' || tgtEl.tagName === 'TEXTAREA');
         if (!inField) {
           e.preventDefault();
           toggleWidget();

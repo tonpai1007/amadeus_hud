@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/tts.js - AMADEUS Kurisu Voice Synthesis & Web Audio Lip-Sync
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   let ttsAudioEl = null;
@@ -281,7 +282,7 @@ window.AMADEUS = window.AMADEUS || {};
   window.AMADEUS.tts = {
     initTTSAudio,
     speakKurisuVoice,
-    isSpeakingVoice: () => isSpeakingVoice,
+    isSpeakingVoice: () => isSpeakingVoice as any,
     pickBestWebSpeechVoice,
     detectScriptLanguage,
   };

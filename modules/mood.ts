@@ -1,5 +1,6 @@
-// modules/mood.js - AMADEUS Kurisu Mood Memory & Emotion HUD Tinting
-window.AMADEUS = window.AMADEUS || {};
+// modules/mood.ts - AMADEUS Kurisu Mood Memory & Emotion HUD Tinting
+declare const window: any;
+(window as any).AMADEUS = (window as any).AMADEUS || {};
 
 (function() {
   const MOOD_KEY = 'amadeus.mood';
@@ -37,12 +38,12 @@ window.AMADEUS = window.AMADEUS || {};
 
   let hudTint = { r: EMOTION_TINT.neutral.r, g: EMOTION_TINT.neutral.g, b: EMOTION_TINT.neutral.b, glow: EMOTION_TINT.neutral.glow };
 
-  function moodDeltaForEmotion(emotion) {
+  function moodDeltaForEmotion(emotion: string): number {
     return MOOD_DELTA[emotion] !== undefined ? MOOD_DELTA[emotion] : 1;
   }
 
-  function loadMood() {
-    const s = window.AMADEUS.state;
+  function loadMood(): void {
+    const s: AMADEUS.State = (window as any).AMADEUS.state;
     try {
       const saved = JSON.parse(localStorage.getItem(MOOD_KEY) || 'null');
       if (saved && typeof saved.value === 'number') {
@@ -53,27 +54,27 @@ window.AMADEUS = window.AMADEUS || {};
     syncMoodToController();
   }
 
-  function saveMood() {
+  function saveMood(): void {
     scheduleStorageWrite(MOOD_KEY, writeMood);
   }
 
-  function writeMood() {
-    const s = window.AMADEUS.state;
+  function writeMood(): void {
+    const s: AMADEUS.State = (window as any).AMADEUS.state;
     try {
       localStorage.setItem(MOOD_KEY, JSON.stringify({ value: s.mood, at: performance.now() }));
     } catch (e) { /* ignore */ }
   }
 
-  function syncMoodToController() {
-    const s = window.AMADEUS.state;
+  function syncMoodToController(): void {
+    const s: AMADEUS.State = (window as any).AMADEUS.state;
     const l2d = s && s.live2DController;
     if (l2d && l2d.setMood) {
       l2d.setMood(s.mood);
     }
   }
 
-  function driftMood() {
-    const s = window.AMADEUS.state;
+  function driftMood(): void {
+    const s: AMADEUS.State = (window as any).AMADEUS.state;
     if (!s.moodLastAdjustAt) { s.moodLastAdjustAt = performance.now(); return; }
     const elapsed = performance.now() - s.moodLastAdjustAt;
     if (elapsed < 3 * 60 * 1000) return;
@@ -85,16 +86,16 @@ window.AMADEUS = window.AMADEUS || {};
     syncMoodToController();
   }
 
-  function adjustMood(delta) {
-    const s = window.AMADEUS.state;
+  function adjustMood(delta: number): void {
+    const s: AMADEUS.State = (window as any).AMADEUS.state;
     s.mood = Math.max(5, Math.min(95, s.mood + delta));
     s.moodLastAdjustAt = performance.now();
     saveMood();
     syncMoodToController();
   }
 
-  function updateEmotionTint() {
-    const s = window.AMADEUS.state;
+  function updateEmotionTint(): void {
+    const s: AMADEUS.State = (window as any).AMADEUS.state;
     const l2d = s && s.live2DController;
     const emo = (l2d && l2d.currentEmotion) || 'neutral';
     const base = EMOTION_TINT[emo] || EMOTION_TINT.neutral;
@@ -123,24 +124,24 @@ window.AMADEUS = window.AMADEUS || {};
     const b = Math.round(hudTint.b);
     const glow = hudTint.glow.toFixed(2);
 
-    if (r === updateEmotionTint._lr && g === updateEmotionTint._lg &&
-        b === updateEmotionTint._lb && glow === updateEmotionTint._lglow) return;
+    if (r === (updateEmotionTint as any)._lr && g === (updateEmotionTint as any)._lg &&
+        b === (updateEmotionTint as any)._lb && glow === (updateEmotionTint as any)._lglow) return;
 
-    updateEmotionTint._lr = r; updateEmotionTint._lg = g;
-    updateEmotionTint._lb = b; updateEmotionTint._lglow = glow;
+    (updateEmotionTint as any)._lr = r; (updateEmotionTint as any)._lg = g;
+    (updateEmotionTint as any)._lb = b; (updateEmotionTint as any)._lglow = glow;
 
     const root = document.documentElement.style;
-    root.setProperty('--hud-emote-r', r);
-    root.setProperty('--hud-emote-g', g);
-    root.setProperty('--hud-emote-b', b);
-    root.setProperty('--hud-emote-glow', glow);
+    root.setProperty('--hud-emote-r', String(r));
+    root.setProperty('--hud-emote-g', String(g));
+    root.setProperty('--hud-emote-b', String(b));
+    root.setProperty('--hud-emote-glow', String(glow));
   }
 
   // LocalStorage debounce writing
   const STORAGE_DEBOUNCE_MS = 600;
   const storageWriteTimers = {};
 
-  function scheduleStorageWrite(key, fn) {
+  function scheduleStorageWrite(key: string, fn: () => void): void {
     if (storageWriteTimers[key]) return;
     storageWriteTimers[key] = setTimeout(() => {
       storageWriteTimers[key] = null;
@@ -159,7 +160,7 @@ window.AMADEUS = window.AMADEUS || {};
    * @property {(key: string, fn: Function) => void} scheduleStorageWrite - Debounced localStorage write helper (600ms, per key).
    * @property {() => void} writeMood - Immediate mood write (used by the debouncer and pagehide flush).
    */
-  window.AMADEUS.mood = {
+  (window as any).AMADEUS.mood = {
     loadMood,
     saveMood,
     adjustMood,

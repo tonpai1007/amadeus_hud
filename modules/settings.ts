@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/settings.js - AMADEUS Settings & Pet Mode Controller
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   const PET_MODE_KEY = 'amadeus.petMode';
@@ -16,9 +17,16 @@ window.AMADEUS = window.AMADEUS || {};
     try {
       const saved = JSON.parse(localStorage.getItem(window.AMADEUS.SETTINGS_KEY) || 'null');
       if (saved) {
+        if (typeof saved.theme === 'string') base.theme = saved.theme;
         base.widgets = Object.assign(base.widgets, saved.widgets || {});
         base.scope = Object.assign(base.scope, saved.scope || {});
         base.features = Object.assign(base.features, saved.features || {});
+        if (saved.collapsedPanels && typeof saved.collapsedPanels === 'object') {
+          base.collapsedPanels = Object.assign({}, saved.collapsedPanels);
+        }
+        if (saved.panelPositions && typeof saved.panelPositions === 'object') {
+          base.panelPositions = Object.assign({}, saved.panelPositions);
+        }
         if (typeof saved.pet === 'boolean') base.pet = saved.pet;
         if (typeof saved.voice === 'boolean') base.voice = saved.voice;
         if (typeof saved.sfx === 'boolean') base.sfx = saved.sfx;
@@ -36,6 +44,33 @@ window.AMADEUS = window.AMADEUS || {};
       try { localStorage.setItem('amadeus.colorMigrationV1', '1'); } catch (e) { /* ignore */ }
     }
     return base;
+  }
+
+  const THEME_SCOPE_PRESETS: Record<string, { ch1: string; ch2: string }> = {
+    skuld:   { ch1: '#ff4d55', ch2: '#ff55aa' },
+    amber:   { ch1: '#ffaa40', ch2: '#ffc266' },
+    sg0:     { ch1: '#98a6b8', ch2: '#bfa0c4' },
+    amadeus: { ch1: '#00e5ff', ch2: '#7c4dff' },
+  };
+
+  function applyTheme(themeName: string, updateScopeColors: boolean = false) {
+    const validThemes = ['skuld', 'amber', 'sg0', 'amadeus'];
+    const theme = validThemes.includes(themeName) ? themeName : 'skuld';
+    document.body.setAttribute('data-theme', theme);
+    if (SETTINGS) {
+      SETTINGS.theme = theme;
+      if (updateScopeColors && THEME_SCOPE_PRESETS[theme]) {
+        SETTINGS.scope.ch1 = THEME_SCOPE_PRESETS[theme].ch1;
+        SETTINGS.scope.ch2 = THEME_SCOPE_PRESETS[theme].ch2;
+        const ch1El = document.getElementById('scope-ch1') as HTMLInputElement | null;
+        const ch2El = document.getElementById('scope-ch2') as HTMLInputElement | null;
+        if (ch1El) ch1El.value = SETTINGS.scope.ch1;
+        if (ch2El) ch2El.value = SETTINGS.scope.ch2;
+      }
+      saveSettings();
+    }
+    const select = document.getElementById('setting-theme') as HTMLSelectElement | null;
+    if (select && select.value !== theme) select.value = theme;
   }
 
   function saveSettings() {
@@ -174,14 +209,14 @@ window.AMADEUS = window.AMADEUS || {};
       header.addEventListener('click', toggleBody);
     }
 
-    document.querySelectorAll('#settings-body input').forEach((input) => {
+    document.querySelectorAll<HTMLInputElement>('#settings-body input').forEach((input) => {
       input.addEventListener('change', () => {
         if (window.AMADEUS.sfx) window.AMADEUS.sfx.playClickSound();
       });
     });
 
-    document.querySelectorAll('#settings-body input[data-widget]').forEach((input) => {
-      const id = input.dataset.widget;
+    document.querySelectorAll<HTMLInputElement>('#settings-body input[data-widget]').forEach((input) => {
+      const id = input.dataset.widget || '';
       input.checked = SETTINGS.widgets[id] !== false;
       document.body.classList.toggle('hide-' + id, !input.checked);
       input.addEventListener('change', () => {
@@ -191,7 +226,7 @@ window.AMADEUS = window.AMADEUS || {};
       });
     });
 
-    const sfxCheck = document.getElementById('setting-sfx');
+    const sfxCheck = document.getElementById('setting-sfx') as HTMLInputElement | null;
     if (sfxCheck) {
       sfxCheck.checked = SETTINGS.sfx !== false;
       if (window.AMADEUS.sfx) window.AMADEUS.sfx.setSfxEnabled(sfxCheck.checked);
@@ -205,7 +240,7 @@ window.AMADEUS = window.AMADEUS || {};
       });
     }
 
-    const petCheck = document.getElementById('setting-pet');
+    const petCheck = document.getElementById('setting-pet') as HTMLInputElement | null;
     if (petCheck) {
       petCheck.checked = SETTINGS.pet || localStorage.getItem(PET_MODE_KEY) === '1';
       petCheck.addEventListener('change', () => {
@@ -213,8 +248,8 @@ window.AMADEUS = window.AMADEUS || {};
       });
     }
 
-    document.querySelectorAll('#settings-body input[data-feature]').forEach((input) => {
-      const name = input.dataset.feature;
+    document.querySelectorAll<HTMLInputElement>('#settings-body input[data-feature]').forEach((input) => {
+      const name = input.dataset.feature || '';
       input.checked = SETTINGS.features[name] !== false;
       input.addEventListener('change', () => {
         SETTINGS.features[name] = input.checked;
@@ -226,7 +261,7 @@ window.AMADEUS = window.AMADEUS || {};
       });
     });
 
-    const voiceCheck = document.getElementById('setting-voice');
+    const voiceCheck = document.getElementById('setting-voice') as HTMLInputElement | null;
     if (voiceCheck) {
       voiceCheck.checked = SETTINGS.voice !== false;
       voiceCheck.addEventListener('change', () => {
@@ -236,10 +271,10 @@ window.AMADEUS = window.AMADEUS || {};
     }
 
     const syncScope = () => {
-      const speedEl = document.getElementById('scope-speed');
-      const densityEl = document.getElementById('scope-density');
-      const ch1El = document.getElementById('scope-ch1');
-      const ch2El = document.getElementById('scope-ch2');
+      const speedEl = document.getElementById('scope-speed') as HTMLInputElement | null;
+      const densityEl = document.getElementById('scope-density') as HTMLInputElement | null;
+      const ch1El = document.getElementById('scope-ch1') as HTMLInputElement | null;
+      const ch2El = document.getElementById('scope-ch2') as HTMLInputElement | null;
       if (speedEl) SETTINGS.scope.speed = parseInt(speedEl.value, 10) || 5;
       if (densityEl) SETTINGS.scope.density = parseInt(densityEl.value, 10) || 5;
       if (ch1El) SETTINGS.scope.ch1 = ch1El.value;
@@ -247,7 +282,7 @@ window.AMADEUS = window.AMADEUS || {};
       saveSettings();
     };
     ['scope-speed', 'scope-density', 'scope-ch1', 'scope-ch2'].forEach((id) => {
-      const el = document.getElementById(id);
+      const el = document.getElementById(id) as HTMLInputElement | null;
       if (!el) return;
       if (id === 'scope-speed') el.value = SETTINGS.scope.speed;
       if (id === 'scope-density') el.value = SETTINGS.scope.density;
@@ -255,14 +290,179 @@ window.AMADEUS = window.AMADEUS || {};
       if (id === 'scope-ch2') el.value = SETTINGS.scope.ch2;
       el.addEventListener('input', syncScope);
     });
+
+    // Theme Engine Selector
+    applyTheme(SETTINGS.theme || 'skuld');
+    const themeSelect = document.getElementById('setting-theme') as HTMLSelectElement | null;
+    if (themeSelect) {
+      themeSelect.value = SETTINGS.theme || 'skuld';
+      themeSelect.addEventListener('change', () => {
+        applyTheme(themeSelect.value, true);
+        if (window.AMADEUS.sfx) window.AMADEUS.sfx.playClickSound();
+      });
+    }
+
+    // Cinematic Mode Button
+    const cinematicBtn = document.getElementById('btn-cinematic-toggle');
+    if (cinematicBtn) {
+      cinematicBtn.addEventListener('click', () => toggleCinematicMode(true));
+    }
+    const cinematicExitBtn = document.getElementById('cinematic-exit-btn');
+    if (cinematicExitBtn) {
+      cinematicExitBtn.addEventListener('click', () => toggleCinematicMode(false));
+    }
+
+    // Reset Panel Positions Button
+    const resetPosBtn = document.getElementById('btn-reset-positions');
+    if (resetPosBtn) {
+      resetPosBtn.addEventListener('click', () => {
+        resetPanelPositions();
+        if (window.AMADEUS.sfx) window.AMADEUS.sfx.playBeepSound();
+      });
+    }
+
+    // Initialize per-panel collapse and draggable panels
+    initPanelCollapse();
+    initDraggablePanels();
+  }
+
+  function initPanelCollapse() {
+    if (!SETTINGS.collapsedPanels) SETTINGS.collapsedPanels = {};
+
+    document.querySelectorAll('.panel-collapse-btn').forEach((btnEl) => {
+      const btn = btnEl as HTMLButtonElement;
+      const panelKey = btn.dataset.panel;
+      const panel = btn.closest('.hud-panel') as HTMLElement | null;
+      if (!panel || !panelKey) return;
+
+      // Restore collapsed state
+      if (SETTINGS.collapsedPanels[panelKey]) {
+        panel.classList.add('panel-collapsed');
+      }
+
+      btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isCollapsed = panel.classList.toggle('panel-collapsed');
+        SETTINGS.collapsedPanels[panelKey] = isCollapsed;
+        saveSettings();
+        if (window.AMADEUS.sfx) window.AMADEUS.sfx.playClickSound();
+      });
+    });
+  }
+
+  function initDraggablePanels() {
+    if (!SETTINGS.panelPositions) SETTINGS.panelPositions = {};
+
+    const panels = document.querySelectorAll('.hud-panel');
+    panels.forEach((panelEl) => {
+      const panel = panelEl as HTMLElement;
+      const panelId = panel.id || panel.className.split(' ')[1] || '';
+      if (!panelId) return;
+
+      // Restore persisted positions
+      const pos = SETTINGS.panelPositions[panelId];
+      if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+        const maxX = Math.max(0, window.innerWidth - (panel.offsetWidth || 280));
+        const maxY = Math.max(0, window.innerHeight - (panel.offsetHeight || 100));
+        const clampedX = Math.max(0, Math.min(pos.x, maxX));
+        const clampedY = Math.max(0, Math.min(pos.y, maxY));
+        panel.style.left = clampedX + 'px';
+        panel.style.top = clampedY + 'px';
+        panel.classList.add('panel-dragged');
+      }
+
+      const header = panel.querySelector('.panel-header') as HTMLElement | null;
+      if (!header) return;
+
+      let isDragging = false;
+      let startX = 0, startY = 0;
+      let initialLeft = 0, initialTop = 0;
+
+      const onPointerDown = (e: PointerEvent) => {
+        const target = e.target as HTMLElement | null;
+        if (!target) return;
+        if (target.closest('button, input, select, textarea, a, .feed-toggle, .panel-header-actions')) return;
+        if (e.button !== 0) return;
+
+        isDragging = true;
+        panel.classList.add('is-dragging');
+        header.setPointerCapture(e.pointerId);
+
+        const rect = panel.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        startX = e.clientX;
+        startY = e.clientY;
+
+        e.preventDefault();
+      };
+
+      const onPointerMove = (e: PointerEvent) => {
+        if (!isDragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const panelWidth = panel.offsetWidth || 280;
+        const panelHeight = panel.offsetHeight || 100;
+        const maxX = Math.max(0, window.innerWidth - panelWidth);
+        const maxY = Math.max(0, window.innerHeight - panelHeight);
+
+        const newLeft = Math.max(0, Math.min(initialLeft + dx, maxX));
+        const newTop = Math.max(0, Math.min(initialTop + dy, maxY));
+
+        panel.style.left = newLeft + 'px';
+        panel.style.top = newTop + 'px';
+        panel.classList.add('panel-dragged');
+      };
+
+      const onPointerUp = (e: PointerEvent) => {
+        if (!isDragging) return;
+        isDragging = false;
+        panel.classList.remove('is-dragging');
+        try { header.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+
+        const rect = panel.getBoundingClientRect();
+        SETTINGS.panelPositions[panelId] = { x: Math.round(rect.left), y: Math.round(rect.top) };
+        saveSettings();
+      };
+
+      header.addEventListener('pointerdown', onPointerDown);
+      header.addEventListener('pointermove', onPointerMove);
+      header.addEventListener('pointerup', onPointerUp);
+      header.addEventListener('pointercancel', onPointerUp);
+    });
+  }
+
+  function resetPanelPositions() {
+    SETTINGS.panelPositions = {};
+    saveSettings();
+    document.querySelectorAll('.hud-panel').forEach((panelEl) => {
+      const panel = panelEl as HTMLElement;
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.classList.remove('panel-dragged');
+      panel.classList.remove('is-dragging');
+    });
+  }
+
+  function toggleCinematicMode(force?: boolean): boolean {
+    const isCinematic = document.body.classList.toggle('cinematic-mode', force);
+    if (window.AMADEUS.sfx) {
+      if (isCinematic) window.AMADEUS.sfx.playBeepSound();
+      else window.AMADEUS.sfx.playClickSound();
+    }
+    return isCinematic;
   }
 
   /**
-   * AMADEUS settings & pet mode controller.
+   * AMADEUS settings, theme engine & pet mode controller.
    * @property {() => object} loadSettings - Deep-clones SETTINGS_DEFAULTS, merges persisted overrides, runs the one-shot legacy color migration.
    * @property {() => void} saveSettings - Persists the current settings object to localStorage.
-   * @property {() => void} initSettings - Reads settings, binds the settings panel inputs and widget toggles.
+   * @property {() => void} initSettings - Reads settings, binds the settings panel inputs, theme, collapses, and drag positions.
    * @property {() => void} initPetMode - Binds the PET toggle and drag persistence for pet mode.
+   * @property {(themeName: string, updateScope?: boolean) => void} applyTheme - Applies a theme preset (skuld/amber/sg0/amadeus).
+   * @property {() => void} resetPanelPositions - Resets all dragged panels back to default corners.
+   * @property {(force?: boolean) => boolean} toggleCinematicMode - Toggles Kurisu focus cinematic mode.
    * @property {() => void} pushFeaturesToController - Pushes the feature-flag object into the Live2D controller.
    * @property {(on: boolean) => void} petApply - Turns pet mode (draggable avatar) on/off.
    * @property {() => object} getSettings - Live settings reference.
@@ -273,6 +473,9 @@ window.AMADEUS = window.AMADEUS || {};
     initSettings,
     initPetMode,
     initInteractMode,
+    applyTheme,
+    resetPanelPositions,
+    toggleCinematicMode,
     pushFeaturesToController,
     petApply: (on) => { if (petApply) petApply(on); else pendingPetMode = on; },
     getSettings: () => SETTINGS,

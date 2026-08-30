@@ -1,26 +1,27 @@
-// modules/clock.js - AMADEUS Nixie Clock & Taskbar Clearance
-window.AMADEUS = window.AMADEUS || {};
+/// <reference path="../types/amadeus.d.ts" />
+// modules/clock.ts - AMADEUS Nixie Clock & Taskbar Clearance
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
-  function applyTaskbarClearance() {
+  function applyTaskbarClearance(): void {
     let clear = 0;
     try {
       clear = window.innerHeight - window.screen.availHeight;
-    } catch (e) { clear = 0; }
+    } catch { clear = 0; }
     if (!isFinite(clear) || clear < 0) clear = 0;
     clear = Math.round(Math.min(clear, 120));
     document.documentElement.style.setProperty('--taskbar-clear', clear + 'px');
   }
 
-  let _clockInterval = null;
+  let _clockInterval: any = null;
 
-  function initClock() {
+  function initClock(): void {
     const clockEl = document.getElementById('hud-clock');
     const dateEl = document.getElementById('hud-date');
     if (!clockEl || !dateEl) return;
-    const tubes = clockEl.querySelectorAll('.clock-tube');
+    const tubes = clockEl.querySelectorAll<HTMLElement>('.clock-tube');
 
-    function update() {
+    function update(): void {
       const now = new Date();
       const hrs = String(now.getHours()).padStart(2, '0');
       const mins = String(now.getMinutes()).padStart(2, '0');
@@ -35,8 +36,9 @@ window.AMADEUS = window.AMADEUS || {};
         tube.classList.remove('tube-pop');
         void tube.offsetWidth;
         tube.classList.add('tube-pop');
-        if (tube._popTimer) clearTimeout(tube._popTimer);
-        tube._popTimer = setTimeout(() => tube.classList.remove('tube-pop'), 400);
+        const customTube = tube as HTMLElement & { _popTimer?: any };
+        if (customTube._popTimer) clearTimeout(customTube._popTimer);
+        customTube._popTimer = setTimeout(() => tube.classList.remove('tube-pop'), 400);
       });
 
       const yyyy = now.getFullYear();
@@ -49,8 +51,7 @@ window.AMADEUS = window.AMADEUS || {};
     _clockInterval = setInterval(update, 1000);
   }
 
-
-  function stopClock() {
+  function stopClock(): void {
     if (_clockInterval) {
       clearInterval(_clockInterval);
       _clockInterval = null;
@@ -60,8 +61,6 @@ window.AMADEUS = window.AMADEUS || {};
 
   /**
    * AMADEUS nixie clock & taskbar clearance.
-   * @property {() => void} applyTaskbarClearance - Sets --taskbar-clear from the window/screen height delta (Lively taskbar overlap).
-   * @property {() => void} initClock - Starts the 1s HH:MM:SS nixie update with digit-flip pop animation.
    */
   window.AMADEUS.clock = {
     applyTaskbarClearance,

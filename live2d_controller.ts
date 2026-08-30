@@ -1,9 +1,12 @@
+/// <reference path="./types/amadeus.d.ts" />
 /**
  * live2d_controller.js - AMADEUS Live2D Makise Kurisu Controller (Modular Edition)
  * PixiJS & Cubism 2/4 Model Loader, Rendering Loop, and Parameter Dispatcher.
  */
 
 class Live2DController {
+    [key: string]: any;
+
     constructor(canvasId, modelPath) {
         this.canvasId = canvasId;
         this.modelPath = modelPath;
@@ -371,7 +374,7 @@ class Live2DController {
         }
     }
 
-    setEmotion(emotion, holdMs) {
+    setEmotion(emotion: string, holdMs?: number) {
         if (window.AMADEUS.L2D_EMOTION) {
             window.AMADEUS.L2D_EMOTION.setEmotion(this, emotion, holdMs);
         }
@@ -433,5 +436,5 @@ class Live2DController {
     }
 }
 
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 window.AMADEUS.Live2DController = Live2DController;

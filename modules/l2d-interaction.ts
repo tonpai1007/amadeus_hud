@@ -1,7 +1,8 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/l2d-interaction.js - AMADEUS Live2D Interaction & Authentic VA Sound Engine
 // Triggers authentic Makise Kurisu voice actress audio clips (Asami Imai) on gesture hits.
 
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   let activeAudio = null;

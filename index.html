@@ -14,11 +14,11 @@
   <script src="live2d/live2dcubismcore.min.js"></script>
   <script src="lib/pixi-live2d-display.min.js"></script>
   <!-- Live2D Subsystems -->
-  <script src="modules/l2d-constants.js"></script>
-  <script src="modules/l2d-emotion.js"></script>
-  <script src="modules/l2d-physics.js"></script>
-  <script src="modules/l2d-interaction.js"></script>
-  <script src="live2d_controller.js"></script>
+  <script src="src/modules/l2d-constants.js"></script>
+  <script src="src/modules/l2d-emotion.js"></script>
+  <script src="src/modules/l2d-physics.js"></script>
+  <script src="src/modules/l2d-interaction.js"></script>
+  <script src="src/live2d_controller.js"></script>
 </head>
 
 <body>
@@ -142,7 +142,11 @@
         <div class="world-line-meta">
           <span id="wl-audio">SIG 0%</span>
           <span id="wl-mind">MIND 30%</span>
-        </div>
+        </div><div class="settings-group">
+            <div class="settings-title">SYSTEM</div>
+            <label class="setting-row"><span>Cinematic Mode</span><button id="btn-cinematic-toggle" class="media-btn">ENTER CINEMATIC</button><button id="cinematic-exit-btn" class="media-btn" style="display:none">EXIT</button></label>
+            <label class="setting-row"><span>Layout</span><button id="btn-reset-positions" class="media-btn">RESET POSITIONS</button></label>
+          </div>
       </div>
     </section>
 
@@ -224,6 +228,7 @@
             <label class="setting-row"><span>PET_MODE</span><input type="checkbox" id="setting-pet" checked></label>
             <label class="setting-row"><span>Voice Replies</span><input type="checkbox" id="setting-voice"
                 checked></label>
+            <label class="setting-row"><span>Theme</span><select id="setting-theme"><option value="skuld">SKULD</option><option value="amber">AMBER</option><option value="sg0">SG0</option><option value="amadeus">AMADEUS</option></select></label>
           </div>
           <div class="settings-group">
             <div class="settings-title">KURISU</div>
@@ -293,29 +298,29 @@
   <script src="openrouter-key.js"></script>
   <script src="brain-key.js"></script>
   <!-- AMADEUS Modular Subsystems -->
-  <script src="modules/state.js"></script>
-  <script src="modules/sfx.js"></script>
-  <script src="modules/tts.js"></script>
-  <script src="modules/clock.js"></script>
-  <script src="modules/weather.js"></script>
-  <script src="modules/divergence.js"></script>
-  <script src="modules/oscilloscope.js"></script>
-  <script src="modules/audio-ring.js"></script>
-  <script src="modules/background.js"></script>
-  <script src="modules/mood.js"></script>
-  <script src="modules/bubble.js"></script>
-  <script src="modules/news.js"></script>
-  <script src="modules/chat-history.js"></script>
-  <script src="modules/chat-api.js"></script>
-  <script src="modules/chat-ui.js"></script>
-  <script src="modules/speech-input.js"></script>
-  <script src="modules/settings.js"></script>
-  <script src="modules/power.js"></script>
-  <script src="modules/uplink.js"></script>
-  <script src="modules/lively.js"></script>
-  <script src="modules/task-widget.js"></script>
-  <script src="modules/media-player.js"></script>
-  <script src="wallpaper.js"></script>
+  <script src="src/modules/state.js"></script>
+  <script src="src/modules/sfx.js"></script>
+  <script src="src/modules/tts.js"></script>
+  <script src="src/modules/clock.js"></script>
+  <script src="src/modules/weather.js"></script>
+  <script src="src/modules/divergence.js"></script>
+  <script src="src/modules/oscilloscope.js"></script>
+  <script src="src/modules/audio-ring.js"></script>
+  <script src="src/modules/background.js"></script>
+  <script src="src/modules/mood.js"></script>
+  <script src="src/modules/bubble.js"></script>
+  <script src="src/modules/news.js"></script>
+  <script src="src/modules/chat-history.js"></script>
+  <script src="src/modules/chat-api.js"></script>
+  <script src="src/modules/chat-ui.js"></script>
+  <script src="src/modules/speech-input.js"></script>
+  <script src="src/modules/settings.js"></script>
+  <script src="src/modules/power.js"></script>
+  <script src="src/modules/uplink.js"></script>
+  <script src="src/modules/lively.js"></script>
+  <script src="src/modules/task-widget.js"></script>
+  <script src="src/modules/media-player.js"></script>
+  <script src="src/wallpaper.js"></script>
 </body>
 
 </html>

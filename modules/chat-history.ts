@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/chat-history.js - AMADEUS Kurisu Chat History & Transcript Management
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   const KURISU_HISTORY_KEY = 'amadeus.kurisuHistory';

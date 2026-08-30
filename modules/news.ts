@@ -1,11 +1,14 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/news.js - AMADEUS Realtime Intelligence & Cybernetic Feed
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   let feedMode = 'news';
   let lastBusinessData = null;
   let lastNewsStories = [];
   let lastNewsReactionAt = 0;
+  const NEWS_CACHE_KEY = "amadeus.news.cache";
+  const NEWS_CACHE_MAX_AGE = 4 * 60 * 60 * 1000; // 4 hours
 
   const curatedCyberPool = [
     { title: "Quantum Divergence Field: Real-time coherence measurement in qubit arrays", url: "https://arxiv.org", score: 418, time: Date.now()/1000 - 1800, tag: "ARXIV" },
@@ -149,7 +152,7 @@ window.AMADEUS = window.AMADEUS || {};
       feedMode = 'news';
     }
 
-    const feedTag = document.getElementById('feed-tag');
+    const feedTag = document.getElementById('feed-tag') as (HTMLElement & { _bound?: boolean }) | null;
     if (feedTag) {
       if (feedMode === 'trendshift') feedTag.textContent = '// TRENDSHIFT_SCOUT';
       else feedTag.textContent = '// REALTIME_NEWS_FEED';
@@ -161,6 +164,8 @@ window.AMADEUS = window.AMADEUS || {};
       fetchRealtimeNews();
     }
   }
+
+  async function renderBusinessFeed() { renderTrendshiftFeed(); }
 
   async function renderTrendshiftFeed() {
     const container = document.getElementById('news-feed');
@@ -261,7 +266,9 @@ window.AMADEUS = window.AMADEUS || {};
   async function fetchRealtimeNews() {
     const container = document.getElementById('news-feed');
     const statusEl = document.getElementById('news-status');
-    const feedTag = document.getElementById('feed-tag');
+    const feedTag = document.getElementById('feed-tag') as (HTMLElement & { _bound?: boolean }) | null;
+    const s = window.AMADEUS.state;
+    
     if (feedTag && !feedTag._bound) {
       feedTag._bound = true;
       feedTag.addEventListener('click', toggleFeedMode);
@@ -275,6 +282,16 @@ window.AMADEUS = window.AMADEUS || {};
     if (feedMode === 'trendshift') {
       renderTrendshiftFeed();
       return true;
+    }
+
+    // Offline: use cache
+    if (!navigator.onLine) {
+      const cached = loadNewsCache();
+      if (cached && cached.stories) {
+        renderNewsStories(container, statusEl, cached.stories, 'CACHED');
+        if (s && s.newsOfflineSince === 0) s.newsOfflineSince = Date.now();
+        return false;
+      }
     }
 
     try {
@@ -294,7 +311,7 @@ window.AMADEUS = window.AMADEUS || {};
 
       const results = await Promise.allSettled(storyPromises);
       const rawStories = results
-        .filter(r => r.status === 'fulfilled' && r.value && r.value.title)
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && !!(r as any).value && !!(r as any).value.title)
         .map(r => r.value);
 
       // Intelligent filter: keep only relevant science/tech/AI/engineering stories
@@ -311,51 +328,67 @@ window.AMADEUS = window.AMADEUS || {};
       }
 
       filteredStories = filteredStories.slice(0, 4);
+      
+      // Cache successful fetch
+      saveNewsCache(filteredStories);
+      if (s) s.newsOfflineSince = 0; // Reset offline timer
 
-      container.innerHTML = '';
-      statusEl.innerText = 'LIVE_SYNC';
-      statusEl.className = 'pulse-text';
-
-      filteredStories.forEach(story => {
-        const item = document.createElement('a');
-        item.className = 'news-item';
-        const targetUrl = story.url || `https://news.ycombinator.com/item?id=${story.id}`;
-        item.href = targetUrl;
-        item.target = '_blank';
-        item.rel = 'noopener noreferrer';
-        item.addEventListener('click', (e) => {
-          e.preventDefault();
-          try { window.open(targetUrl, '_blank'); } catch (err) {}
-        });
-
-        const titleDiv = document.createElement('div');
-        titleDiv.className = 'news-title';
-        titleDiv.innerText = story.title;
-
-        const metaDiv = document.createElement('div');
-        metaDiv.className = 'news-meta';
-
-        const tag = story.tag || getCleanDomainTag(story.url, story.title);
-        const esc = window.AMADEUS.escapeHtml;
-        metaDiv.innerHTML = `
-          <span class="news-score">▲ ${story.score || 0} pts</span>
-          <span class="news-time">posted ${timeSince(story.time)} ago</span>
-          <span class="news-domain">[ ${esc(tag)} ]</span>
-        `;
-
-        item.appendChild(titleDiv);
-        item.appendChild(metaDiv);
-        container.appendChild(item);
-      });
-
+      renderNewsStories(container, statusEl, filteredStories, 'LIVE_SYNC');
       reactToNews(filteredStories);
       lastNewsStories = filteredStories;
       return true;
     } catch (err) {
       console.warn("AMADEUS News Sync: API offline, loading curated cyber intelligence pool.", err);
-      renderFallbackNews(container, statusEl);
+      
+      // Try cache on failure
+      const cached = loadNewsCache();
+      if (cached && cached.stories) {
+        renderNewsStories(container, statusEl, cached.stories, 'CACHED');
+        if (s && s.newsOfflineSince === 0) s.newsOfflineSince = Date.now();
+      } else {
+        renderFallbackNews(container, statusEl);
+        if (s && s.newsOfflineSince === 0) s.newsOfflineSince = Date.now();
+      }
       return false;
     }
+  }
+
+  function renderNewsStories(container, statusEl, stories, statusText) {
+    container.innerHTML = '';
+    statusEl.innerText = statusText;
+    statusEl.className = 'pulse-text';
+
+    stories.forEach(story => {
+      const item = document.createElement('a');
+      item.className = 'news-item';
+      const targetUrl = story.url || `https://news.ycombinator.com/item?id=${story.id}`;
+      item.href = targetUrl;
+      item.target = '_blank';
+      item.rel = 'noopener noreferrer';
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        try { window.open(targetUrl, '_blank'); } catch (err) {}
+      });
+
+      const titleDiv = document.createElement('div');
+      titleDiv.className = 'news-title';
+      titleDiv.innerText = story.title;
+
+      const metaDiv = document.createElement('div');
+      metaDiv.className = 'news-meta';
+
+      const tag = story.tag || getCleanDomainTag(story.url, story.title);
+      const esc = window.AMADEUS.escapeHtml;
+      metaDiv.innerHTML = `
+        <span class="news-score">▲ ${story.score || 0} pts</span>
+        <span class="news-time">posted ${timeSince(story.time || (Date.now()/1000 - 1800))} ago</span>
+        <span class="news-domain">[ ${esc(tag)} ]</span>
+      `;
+
+      item.appendChild(titleDiv);
+      item.appendChild(metaDiv);
+      container.appendChild(item);
+    });
   }
 
   function renderFallbackNews(container, statusEl) {
@@ -390,6 +423,27 @@ window.AMADEUS = window.AMADEUS || {};
 
     reactToNews(curatedCyberPool);
     lastNewsStories = curatedCyberPool.slice();
+  }
+
+  function saveNewsCache(stories) {
+    try {
+      const payload = JSON.stringify({ stories, at: Date.now() });
+      localStorage.setItem(NEWS_CACHE_KEY, payload);
+    } catch (e) { /* ignore */ }
+  }
+
+  function loadNewsCache() {
+    try {
+      const raw = localStorage.getItem(NEWS_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const age = Date.now() - (parsed.at || 0);
+      if (age > NEWS_CACHE_MAX_AGE) {
+        localStorage.removeItem(NEWS_CACHE_KEY);
+        return null;
+      }
+      return parsed;
+    } catch (e) { return null; }
   }
 
   // Self-scheduling fetch loop with exponential backoff: a failed HN fetch

@@ -1,11 +1,12 @@
-// modules/weather.js - AMADEUS Real-time Ambient Weather Awareness
-window.AMADEUS = window.AMADEUS || {};
+// modules/weather.ts - AMADEUS Real-time Ambient Weather Awareness
+declare const window: any;
+(window as any).AMADEUS = (window as any).AMADEUS || {};
 
 (function() {
   const WEATHER_REFRESH_MS = 30 * 60 * 1000; // 30 mins
   let refreshTimer = null;
 
-  async function fetchWeather() {
+  async function fetchWeather(): Promise<void> {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 8000);
@@ -32,7 +33,7 @@ window.AMADEUS = window.AMADEUS || {};
       const isCloudy = descLower.includes('cloud') || descLower.includes('overcast');
       const isSunny = descLower.includes('sun') || descLower.includes('clear');
 
-      window.AMADEUS.state.weather = {
+      (window as any).AMADEUS.state.weather = {
         city,
         condition: desc,
         temp_C: tempC,
@@ -50,8 +51,8 @@ window.AMADEUS = window.AMADEUS || {};
     } catch (err) {
       console.warn('[Weather] Ambient weather fetch skipped:', err.message);
       // Sensible default
-      if (!window.AMADEUS.state.weather) {
-        window.AMADEUS.state.weather = {
+      if (!(window as any).AMADEUS.state.weather) {
+        (window as any).AMADEUS.state.weather = {
           city: 'Local Area',
           condition: 'Clear',
           temp_C: '26',
@@ -68,14 +69,14 @@ window.AMADEUS = window.AMADEUS || {};
     }
   }
 
-  function initWeather() {
+  function initWeather(): void {
     fetchWeather();
     clearInterval(refreshTimer);
     refreshTimer = setInterval(fetchWeather, WEATHER_REFRESH_MS);
   }
 
-  function getWeatherSummary() {
-    const w = window.AMADEUS.state.weather;
+  function getWeatherSummary(): string | null {
+    const w = (window as any).AMADEUS.state.weather;
     if (!w) return null;
     return `${w.condition}, ${w.temp_C}°C`;
   }
@@ -86,7 +87,7 @@ window.AMADEUS = window.AMADEUS || {};
    * @property {() => void} initWeather - Fetches immediately then every 30 minutes.
    * @property {() => string|null} getWeatherSummary - "Clear, 26°C" style summary for brain context.
    */
-  window.AMADEUS.weather = {
+  (window as any).AMADEUS.weather = {
     initWeather,
     fetchWeather,
     getWeatherSummary,

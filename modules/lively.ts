@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/lively.js - AMADEUS Lively Wallpaper Native Integration & Telemetry WS
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   let livelyWS = null;
@@ -136,8 +137,8 @@ window.AMADEUS = window.AMADEUS || {};
 
     const now = performance.now();
     const interval = 1000 / window.AMADEUS.PERF.visualFps;
-    if (now - (handleAudioFrame._lastVis || 0) >= interval) {
-      handleAudioFrame._lastVis = now;
+    if (now - ((handleAudioFrame as any)._lastVis || 0) >= interval) {
+      (handleAudioFrame as any)._lastVis = now;
       if (window.AMADEUS.audioRing) window.AMADEUS.audioRing.drawAudioRing(audioArray, now);
     }
   }
@@ -259,7 +260,7 @@ window.AMADEUS = window.AMADEUS || {};
         const intensity = toNumber(val, 0, 100, 50);
         const opacity = (intensity / 100).toFixed(2);
         document.documentElement.style.setProperty('--crt-scanline-opacity', opacity);
-        const crtEl = document.querySelector('.crt-overlay') || document.getElementById('crt-overlay');
+        const crtEl = (document.querySelector('.crt-overlay') || document.getElementById('crt-overlay')) as HTMLElement | null;
         if (crtEl) crtEl.style.opacity = opacity;
         break;
       }

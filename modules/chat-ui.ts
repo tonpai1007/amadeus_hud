@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/chat-ui.js - AMADEUS Kurisu Chat UI, Input Handling & Greeting Logic
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   let chatLogEl = null;
@@ -263,8 +264,9 @@ window.AMADEUS = window.AMADEUS || {};
       const s = window.AMADEUS.state;
       if (s.isLivelyPaused) return;
       if (window.AMADEUS.power && window.AMADEUS.power.markActivity) window.AMADEUS.power.markActivity();
-      const inRealField = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' ||
-                                       e.target.isContentEditable);
+      const tgt = e.target as HTMLElement | null;
+      const inRealField = tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' ||
+                                  tgt.isContentEditable);
       if (inRealField) {
         if (e.key === 'Enter' && e.target === kurisuInputEl) {
           e.preventDefault();

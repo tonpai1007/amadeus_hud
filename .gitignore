@@ -27,3 +27,8 @@ dist/
 # Playwright test artifacts
 playwright-report/
 test-results/
+
+# Generated build artifacts (sources live in .ts — never commit compiled JS)
+src/
+*.js
+!playwright.config.js

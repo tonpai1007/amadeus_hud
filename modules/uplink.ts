@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/uplink.js - AMADEUS Real-Time Consciousness & Cognitive Telemetry Stream
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   let ws = null;
@@ -61,6 +62,19 @@ window.AMADEUS = window.AMADEUS || {};
     reconnectTimer = setTimeout(initCognitiveUplink, delay);
   }
 
+  // Manual retry affordance: click uplink status to force reconnect
+  function retryUplink() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    retryCount = 0;
+    if (ws) {
+      try { ws.close(); } catch (e) { /* already closed */ }
+      ws = null;
+    }
+    if (hb) hb.stop();
+    updateUplinkStatus(false);
+    initCognitiveUplink();
+  }
+
   // Intentional teardown: closes the consciousness stream WITHOUT arming the
   // reconnect loop (used when Lively pauses playback or the page unloads).
   function closeCognitiveUplink() {
@@ -87,9 +101,21 @@ window.AMADEUS = window.AMADEUS || {};
   function updateUplinkStatus(online) {
     const uplinkEl = document.getElementById('hud-uplink');
     const kernelEl = document.getElementById('hud-kernel');
+    const s = window.AMADEUS.state;
+    
     if (uplinkEl) {
-      setStatusText(uplinkEl, `UPLINK: ${online ? 'LIVE_STREAM' : 'DISCONNECTED'}`);
-      uplinkEl.style.color = online ? '#ff4d55' : '#888';
+      if (online) {
+        setStatusText(uplinkEl, 'UPLINK: LIVE_STREAM');
+        uplinkEl.style.color = '#ff4d55';
+        if (s) s.uplinkOfflineSince = 0;
+      } else {
+        const offlineSince = s && s.uplinkOfflineSince ? s.uplinkOfflineSince : Date.now();
+        if (s) s.uplinkOfflineSince = offlineSince;
+        const minutes = Math.floor((Date.now() - offlineSince) / 60000);
+        const cacheHint = minutes > 0 ? ` (cached ${minutes}m ago)` : '';
+        setStatusText(uplinkEl, `UPLINK: OFFLINE${cacheHint}`);
+        uplinkEl.style.color = '#888';
+      }
     }
     if (kernelEl) {
       setStatusText(kernelEl, `KERNEL: ${online ? 'ACTIVE_SYNC' : 'LOCAL_IDLE'}`);
@@ -193,8 +219,17 @@ window.AMADEUS = window.AMADEUS || {};
    * @property {() => void} init - Opens the /ws/amadeus stream with heartbeat + exponential reconnect; dispatches bus events (telemetry, vision insights, task focus, spontaneous speech) to the HUD.
    * @property {() => void} close - Tears the stream down without arming reconnect (pause/unload).
    */
+  // Wire retry on uplink status element
+  const uplinkStatusEl = document.getElementById('hud-uplink');
+  if (uplinkStatusEl) {
+    uplinkStatusEl.style.cursor = 'pointer';
+    uplinkStatusEl.title = 'Click to retry uplink connection';
+    uplinkStatusEl.addEventListener('click', retryUplink);
+  }
+
   window.AMADEUS.uplink = {
     init: initCognitiveUplink,
     close: closeCognitiveUplink,
+    retry: retryUplink,
   };
 })();

@@ -1,4 +1,4 @@
-{
+﻿{
   "compilerOptions": {
     "target": "ES2020",
     "module": "Node16",
@@ -22,19 +22,21 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
     "declaration": false,
     "sourceMap": false
   },
   "include": [
-    "modules/**/*",
-    "wallpaper.js",
-    "live2d_controller.js",
+    "modules/**/*.ts",
+    "wallpaper.ts",
+    "live2d_controller.ts",
     "types/amadeus.d.ts"
   ],
   "exclude": [
     "node_modules",
     "dist",
     "tests",
-    "lib"
+    "lib",
+    "src"
   ]
 }

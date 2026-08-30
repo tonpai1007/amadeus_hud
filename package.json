@@ -6,11 +6,12 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
     "test": "node tests/run-tests.mjs",
     "test:visual": "playwright test",
     "test:visual:update": "playwright test --update-snapshots",
     "test:all": "npm run test && npm run test:visual && npm run typecheck",
-    "typecheck": "tsc --noEmit --allowJs --checkJs false"
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

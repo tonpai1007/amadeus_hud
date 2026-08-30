@@ -1,5 +1,6 @@
-// modules/divergence.js - AMADEUS Steins;Gate Holographic Nixie Divergence Meter
-window.AMADEUS = window.AMADEUS || {};
+// modules/divergence.ts - AMADEUS Steins;Gate Holographic Nixie Divergence Meter
+declare const window: any;
+(window as any).AMADEUS = (window as any).AMADEUS || {};
 
 (function() {
   let divCanvas = null;
@@ -15,7 +16,7 @@ window.AMADEUS = window.AMADEUS || {};
   let shiftProgress = 1;
   let nextJitterTime = performance.now() + 8000;
 
-  function initDivergence() {
+  function initDivergence(): void {
     divCanvas = document.getElementById('divergence-canvas');
     if (!divCanvas) return;
     divCtx = divCanvas.getContext('2d');
@@ -36,20 +37,50 @@ window.AMADEUS = window.AMADEUS || {};
     // Click on divergence meter to manually trigger a Worldline Shift calculation!
     divCanvas.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (window.AMADEUS.sfx) window.AMADEUS.sfx.playBeepSound();
+      if ((window as any).AMADEUS.sfx) (window as any).AMADEUS.sfx.playBeepSound();
       triggerWorldlineShift();
     });
 
     // Render is driven externally by the unified visual loop tick
   }
 
-  function triggerWorldlineShift(customTarget) {
+  function calculateBaselineDivergence(): number {
+    const s = (window as any).AMADEUS.state;
+    const mood = (s && typeof s.mood === 'number') ? s.mood : 55;
+    let base = 1.048596;
+
+    if (mood >= 65) {
+      const ratio = (mood - 65) / 30;
+      base = 1.048596 + ratio * 0.065000;
+    } else if (mood >= 45) {
+      const ratio = (mood - 45) / 20;
+      base = 1.001000 + ratio * (1.048596 - 1.001000);
+    } else {
+      const ratio = Math.max(0, mood - 5) / 40;
+      base = 0.571024 + ratio * 0.414000;
+    }
+
+    if (s && s.weather) {
+      const desc = String(s.weather.condition || s.weather.desc || '').toLowerCase();
+      if (desc.includes('rain') || desc.includes('storm') || desc.includes('snow') || desc.includes('thunder')) {
+        base -= 0.015;
+      } else if (desc.includes('clear') || desc.includes('sun')) {
+        base += 0.008;
+      }
+    }
+
+    return Math.max(0.000001, Number(base.toFixed(6)));
+  }
+
+  function triggerWorldlineShift(customTarget?: number): void {
     if (customTarget !== undefined) {
       targetDivergence = customTarget;
     } else {
-      // Calculate a random diverging worldline (e.g. 0.571024 to 1.130205)
-      const isAlpha = Math.random() < 0.35;
-      const isSteinsGate = Math.random() < 0.25;
+      // Calculate a random diverging worldline with mood bias
+      const s = (window as any).AMADEUS.state;
+      const mood = (s && typeof s.mood === 'number') ? s.mood : 55;
+      const isAlpha = mood < 45 ? Math.random() < 0.65 : Math.random() < 0.25;
+      const isSteinsGate = mood >= 60 ? Math.random() < 0.45 : Math.random() < 0.15;
       if (isSteinsGate) {
         targetDivergence = 1.048596;
       } else if (isAlpha) {
@@ -63,17 +94,26 @@ window.AMADEUS = window.AMADEUS || {};
     shiftProgress = 0;
 
     // Notify speech bubble
-    if (window.AMADEUS.bubble && Math.random() < 0.4) {
+    if ((window as any).AMADEUS.bubble && Math.random() < 0.4) {
       setTimeout(() => {
         const line = targetDivergence > 1.0 
           ? "Divergence recalculated. We are maintaining Beta/Steins Gate line."
           : "Warning: Divergence dropped below 1.0. Alpha attractor field detected.";
-        window.AMADEUS.bubble.showKurisuBubble(line, 5000);
+        (window as any).AMADEUS.bubble.showKurisuBubble(line, 5000);
       }, 1200);
     }
   }
 
-  function updateDivergence(now) {
+  let nextMoodSyncTime = performance.now() + 12000;
+
+  function updateDivergence(now: number): void {
+    // Subtle organic drift toward live mood & desktop worldline baseline
+    if (now >= nextMoodSyncTime && !isShifting) {
+      const baseline = calculateBaselineDivergence();
+      targetDivergence += (baseline - targetDivergence) * 0.05;
+      nextMoodSyncTime = now + 12000 + Math.random() * 8000;
+    }
+
     // Small quantum jitter every 9-16 seconds
     if (now >= nextJitterTime && !isShifting) {
       const delta = (Math.random() * 0.000004 - 0.000002);
@@ -92,7 +132,7 @@ window.AMADEUS = window.AMADEUS || {};
         currentDivergence = currentDivergence + (targetDivergence - currentDivergence) * 0.15;
       }
     } else {
-      currentDivergence += (targetDivergence - currentDivergence) * 0.1;
+      currentDivergence += (targetDivergence - currentDivergence) * 0.08;
     }
 
     // Format target string
@@ -100,7 +140,7 @@ window.AMADEUS = window.AMADEUS || {};
     displayDigits = str;
   }
 
-  function renderDivergence(now) {
+  function renderDivergence(now: number): void {
     if (!divCtx || !divCanvas) return;
     // Skip painting entirely while the host panel is hidden (display:none);
     // if a window resize happened while hidden, re-measure once on return.
@@ -181,7 +221,7 @@ window.AMADEUS = window.AMADEUS || {};
     divCtx.fillText('// DIVERGENCE METER', 6, 8);
   }
 
-  function roundRect(ctx, x, y, width, height, radius, fill, stroke) {
+  function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number, fill: boolean, stroke: boolean): void {
     ctx.beginPath();
     ctx.moveTo(x + radius, y);
     ctx.lineTo(x + width - radius, y);
@@ -204,10 +244,11 @@ window.AMADEUS = window.AMADEUS || {};
    * @property {(now: number) => void} renderDivergence - Advances the divergence simulation and paints one nixie frame (skips while the panel is hidden).
    * @property {() => number} getDivergence - Current displayed divergence value.
    */
-  window.AMADEUS.divergence = {
+  (window as any).AMADEUS.divergence = {
     initDivergence,
     triggerWorldlineShift,
     renderDivergence,
+    calculateBaselineDivergence,
     getDivergence: () => currentDivergence,
   };
 })();

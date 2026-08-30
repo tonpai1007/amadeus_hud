@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/audio-ring.js - AMADEUS 2D Audio Visualizer Ring & Clockwork Gears
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   let audioCanvas, ctx;

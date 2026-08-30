@@ -1,7 +1,8 @@
+/// <reference path="./types/amadeus.d.ts" />
 // wallpaper.js - AMADEUS Convergence Sync HUD Orchestrator (Modular Architecture)
 // Coordinates audio visualizers, Live2D avatar, cognitive uplink, and Lively Wallpaper runtime.
 
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   let lastVisualTick = 0;
@@ -92,17 +93,17 @@ window.AMADEUS = window.AMADEUS || {};
   });
 
   // --- INTERVAL REGISTRY FOR CLEANUP ---
-  const _intervalIds = new Set();
-  const originalSetInterval = window.setInterval;
-  window.setInterval = function(fn, ms, ...args) {
+  const _intervalIds = new Set<any>();
+  const originalSetInterval = window.setInterval.bind(window);
+  (window as any).setInterval = function(fn: any, ms?: number, ...args: any[]): any {
     const id = originalSetInterval(fn, ms, ...args);
     _intervalIds.add(id);
     return id;
   };
-  const originalClearInterval = window.clearInterval;
-  window.clearInterval = function(id) {
+  const originalClearInterval = window.clearInterval.bind(window);
+  (window as any).clearInterval = function(id?: any): void {
     _intervalIds.delete(id);
-    return originalClearInterval(id);
+    originalClearInterval(id);
   };
   window.addEventListener('pagehide', () => {
     _intervalIds.forEach(id => originalClearInterval(id));
@@ -225,7 +226,7 @@ window.AMADEUS = window.AMADEUS || {};
     // Keyboard Shortcuts Matrix Modal (Ctrl+/)
     const keybindOverlay = document.getElementById('keybind-overlay');
     const keybindClose = document.getElementById('keybind-close');
-    const toggleKeybinds = (show) => {
+    const toggleKeybinds = (show?: boolean) => {
       if (!keybindOverlay) return;
       const isHidden = keybindOverlay.hasAttribute('hidden');
       const next = show !== undefined ? show : isHidden;
@@ -248,8 +249,15 @@ window.AMADEUS = window.AMADEUS || {};
       if ((e.ctrlKey || e.metaKey) && (e.key === '/' || e.code === 'Slash')) {
         e.preventDefault();
         toggleKeybinds();
-      } else if (e.key === 'Escape' && keybindOverlay && !keybindOverlay.hasAttribute('hidden')) {
-        toggleKeybinds(false);
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'c' || e.key === 'C' || e.code === 'KeyC')) {
+        e.preventDefault();
+        if (settings && (settings as any).toggleCinematicMode) (settings as any).toggleCinematicMode();
+      } else if (e.key === 'Escape') {
+        if (keybindOverlay && !keybindOverlay.hasAttribute('hidden')) {
+          toggleKeybinds(false);
+        } else if (document.body.classList.contains('cinematic-mode') && settings && (settings as any).toggleCinematicMode) {
+          (settings as any).toggleCinematicMode(false);
+        }
       }
     });
 
@@ -259,8 +267,8 @@ window.AMADEUS = window.AMADEUS || {};
         if (e.key !== 'Tab' || keybindOverlay.hasAttribute('hidden')) return;
         const focusable = keybindOverlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
         if (focusable.length === 0) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
+        const first = focusable[0] as HTMLElement;
+        const last = focusable[focusable.length - 1] as HTMLElement;
         if (e.shiftKey) {
           if (document.activeElement === first) {
             e.preventDefault();

@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/media-player.js - Interactive Steins;Gate Cybernetic Media Player Dock for AMADEUS HUD
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   let isPlaying = false;

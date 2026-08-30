@@ -12,9 +12,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import * as esbuild from 'esbuild';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MOD = (f) => path.join(ROOT, 'modules', f);
+const MOD = (f) => {
+  const tsName = f.replace(/\.js$/, '.ts');
+  const tsPath = path.join(ROOT, 'modules', tsName);
+  if (fs.existsSync(tsPath)) return tsPath;
+  return path.join(ROOT, 'src', 'modules', f);
+};
 
 function stubElement() {
   return {
@@ -67,12 +73,12 @@ function makeSandbox(extra = {}) {
 }
 
 function loadModule(sandbox, file) {
-  const code = fs.readFileSync(file, 'utf8');
+  let code = fs.readFileSync(file, 'utf8');
+  if (file.endsWith('.ts')) {
+    code = esbuild.transformSync(code, { loader: 'ts', target: 'node18' }).code;
+  }
   vm.runInContext(code, vm.createContext(sandbox), { filename: path.basename(file) });
 }
-
-// ---------------------------------------------------------------------------
-// tts.js — script detection & voice selection
 // ---------------------------------------------------------------------------
 test('tts.detectScriptLanguage detects Thai, Japanese and English', () => {
   const { sandbox } = makeSandbox();
@@ -535,7 +541,7 @@ test('smoke: no mojibake (double-encoded UTF-8) in user-facing sources', () => {
   const mojibake = /[\u00C2\u00C3\u00E2][\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178]/;
 
   const bad = [];
-  for (const f of ['index.html', 'style.css', 'wallpaper.js', 'live2d_controller.js', 'package.json']) {
+  for (const f of ['index.html', 'style.css', 'src/wallpaper.js', 'src/live2d_controller.js', 'package.json']) {
     const m = fs.readFileSync(path.join(ROOT, f), 'utf8').match(mojibake);
     if (m) bad.push(`${f}: ${JSON.stringify(m[0])}`);
   }
@@ -554,7 +560,7 @@ test('smoke: no mojibake (double-encoded UTF-8) in user-facing sources', () => {
 // ---------------------------------------------------------------------------
 test('smoke: all source JS files compile without syntax errors', () => {
   const files = [];
-  for (const dir of ['.', 'modules']) {
+  for (const dir of ['src', 'src/modules']) {
     for (const f of fs.readdirSync(path.join(ROOT, dir))) {
       if (!f.endsWith('.js')) continue;
       const full = path.join(ROOT, dir, f);
@@ -590,7 +596,7 @@ test('smoke: DOM ids referenced in modules exist in index.html', () => {
 
   const missing = [];
   const refRe = /getElementById\(\s*['"]([^'"]+)['"]\s*\)/g;
-  for (const dir of ['.', 'modules']) {
+  for (const dir of ['src', 'src/modules']) {
     for (const f of fs.readdirSync(path.join(ROOT, dir))) {
       if (!f.endsWith('.js')) continue;
       const full = path.join(ROOT, dir, f);

@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/oscilloscope.js - AMADEUS Phosphor Oscilloscope & Cognitive Waveform
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   let wlCanvas, wlCtx;

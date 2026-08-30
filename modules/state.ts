@@ -1,5 +1,5 @@
 // modules/state.js - AMADEUS Unified State & Shared Configuration
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   // Global AMADEUS runtime state
@@ -179,7 +179,7 @@ window.AMADEUS = window.AMADEUS || {};
     const o = opts || {};
     const intervalMs = o.intervalMs || 25000;
     const staleMs = o.staleMs || 90000;
-    let timer: number | null = null;
+    let timer: ReturnType<typeof setInterval> | null = null;
     let lastSeen = Date.now();
 
     function touch() { lastSeen = Date.now(); }
@@ -231,7 +231,7 @@ window.AMADEUS = window.AMADEUS || {};
   window.AMADEUS.PERF_LEVELS = PERF_LEVELS;
   window.AMADEUS.MAX_DPR = MAX_DPR;
   window.AMADEUS.escapeHtml = escapeHtml;
-  window.AMADEUS.chat = window.AMADEUS.chat || {};
+  window.AMADEUS.chat = window.AMADEUS.chat || ({} as any);
   window.AMADEUS.getPerfLevel = () => perfLevel;
   window.AMADEUS.setPerfLevel = (lvl) => { perfLevel = lvl; };
   window.AMADEUS.SETTINGS_KEY = SETTINGS_KEY;

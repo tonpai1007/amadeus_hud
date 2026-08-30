@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/l2d-physics.js - AMADEUS Live2D Procedural Physics & Micro-Animation
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   function updateBlink(ctrl, dt, now) {

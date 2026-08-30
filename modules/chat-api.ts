@@ -1,5 +1,6 @@
+/// <reference path="../types/amadeus.d.ts" />
 // modules/chat-api.js - AMADEUS Kurisu AI Cognition, Multi-Tier Chat API & Canned Responses
-window.AMADEUS = window.AMADEUS || {};
+window.AMADEUS = window.AMADEUS || ({} as any);
 
 (function() {
   const KURISU_BRAIN = {
@@ -101,7 +102,7 @@ window.AMADEUS = window.AMADEUS || {};
       if (window.AMADEUS.divergence && window.AMADEUS.divergence.triggerWorldlineShift) {
         window.AMADEUS.divergence.triggerWorldlineShift();
       }
-      const divVal = window.AMADEUS.divergence ? window.AMADEUS.divergence.getDivergence().toFixed(6) : "1.048596";
+      const divVal = window.AMADEUS.divergence ? window.AMADEUS.divergence.getDivergence() : "1.048596";
       return `World line currently reading ${divVal}. Attractor field is stable for now.`;
     }
     if (/\b(d-?mail|time travel|time leap|machine)\b/.test(t))
