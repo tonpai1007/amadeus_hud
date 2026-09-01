@@ -40,7 +40,9 @@ window.AMADEUS = window.AMADEUS || ({} as any);
   function writeKurisuHistory() {
     const s = window.AMADEUS.state;
     try {
-      localStorage.setItem(KURISU_HISTORY_KEY, JSON.stringify(s.kurisuHistory.slice(-KURISU_HISTORY_MAX * 2)));
+      const payload = JSON.stringify(s.kurisuHistory.slice(-KURISU_HISTORY_MAX * 2));
+      if (window.AMADEUS.safeSetItem) window.AMADEUS.safeSetItem(KURISU_HISTORY_KEY, payload);
+      else localStorage.setItem(KURISU_HISTORY_KEY, payload);
     } catch (e) { /* ignore */ }
   }
 
@@ -127,7 +129,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
   function writeChatLog() {
     const s = window.AMADEUS.state;
     try {
-      localStorage.setItem(CHAT_LOG_KEY, JSON.stringify(s.chatLog.slice(-CHAT_LOG_MAX)));
+      if (window.AMADEUS.safeSetItem) window.AMADEUS.safeSetItem(CHAT_LOG_KEY, JSON.stringify(s.chatLog.slice(-CHAT_LOG_MAX)));
+      else localStorage.setItem(CHAT_LOG_KEY, JSON.stringify(s.chatLog.slice(-CHAT_LOG_MAX)));
     } catch (e) { /* ignore */ }
   }
 

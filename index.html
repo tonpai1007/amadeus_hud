@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AMADEUS Convergence Sync HUD</title>
   <!-- Fonts are self-hosted (see @font-face in style.css, lib/fonts/) so the
-       HUD never depends on a network connection -->
+       HUD never depends on a network connection. -->
   <link rel="stylesheet" href="style.css">
   <!-- Load PixiJS & Live2D SDK dependencies -->
   <script src="lib/pixi.min.js"></script>
@@ -22,71 +22,66 @@
 </head>
 
 <body>
-  <!-- Now-playing album art backdrop: current track thumbnail, blurred +
-       dimmed into the scene (hidden when no music or Ambient BG off) -->
+  <!-- Now-playing album art backdrop: current track thumbnail, blurred and
+       dimmed into the scene (hidden when no music or Ambient BG is off). -->
   <div id="bg-album"></div>
 
-  <!-- Ambient background layer: drifting data particles + audio edge lines -->
+  <!-- Ambient background layer: drifting data particles + audio edge lines. -->
   <canvas id="bg-canvas"></canvas>
 
-  <!-- HTML Canvas for 2D Audio Visualizer Ring (with cursor gravitational lensing) -->
+  <!-- 2D audio visualizer ring, behind the Live2D stage. -->
   <canvas id="audio-canvas"></canvas>
 
-  <!-- Live2D character lighting & grounding -->
+  <!-- Live2D character lighting & grounding. -->
   <div class="l2d-aura" id="l2d-aura"></div>
   <div class="l2d-shadow" id="l2d-shadow"></div>
-
-  <!-- Live2D Makise Kurisu Canvas -->
   <canvas id="live2d-canvas"></canvas>
 
-  <!-- Dev-only L2D debug overlay (Ctrl+Shift+D): live parameter stream + poke hit zone -->
+  <!-- Dev-only L2D debug overlay (Ctrl+Shift+D). -->
   <div id="l2d-debug" hidden>
     <div class="l2d-debug-title">L2D DEBUG</div>
     <div id="l2d-debug-rows"></div>
   </div>
   <div id="l2d-debug-zone" hidden></div>
 
-  <!-- Kurisu speech bubble (type to talk, Enter to send) -->
-  <div class="kurisu-bubble" id="kurisu-bubble">
-    <span class="bubble-text" id="kurisu-bubble-text"></span><span class="bubble-caret" id="kurisu-bubble-caret"></span>
+  <!-- Kurisu speech bubble. It is invoked by explicit interactions only. -->
+  <div class="kurisu-bubble" id="kurisu-bubble" role="status" aria-live="polite">
+    <span class="bubble-text" id="kurisu-bubble-text"></span>
+    <span class="bubble-caret hidden" id="kurisu-bubble-caret" aria-hidden="true"></span>
   </div>
 
-  <!-- Futuristic Scanline Overlay -->
+  <!-- CRT finish. Scanlines are visually confined to the stage/plot areas by CSS. -->
   <div class="crt-overlay" id="crt-overlay"></div>
-  <!-- Unified CRT finish: barrel curvature + phosphor dots + corner vignette
-       + soft bloom so every panel/piece sits inside the same tube -->
   <div class="crt-curve"></div>
   <div class="vignette-overlay"></div>
   <div class="bloom-overlay"></div>
-  <!-- Beat pulse: quick red bloom that flashes on the music's kick -->
   <div id="beat-glow"></div>
-  <!-- Screen Co-Pilot Shutter Flash -->
   <div id="screen-flash" class="screen-flash"></div>
-  <!-- Time-of-day color wash: warm at midday, cool at night, driven by the
-       --daylight variable set each minute in applyTimeOfDay -->
   <div class="time-tint"></div>
 
-  <!-- HUD Interface Wrapper -->
-  <div id="hud-container">
-
-    <!-- TOP LEFT: Clock & System State -->
-    <header class="hud-panel top-left-panel">
+  <main id="hud-container" aria-label="AMADEUS convergence sync HUD">
+    <!-- Upper-left temporal and media service bay. -->
+    <section class="hud-panel temporal-bay top-left-panel" aria-labelledby="temporal-title">
       <div class="panel-header">
-        <span class="panel-tag">// COGNITIVE_TEMPORAL_RES</span>
-        <button class="pet-toggle" id="pet-toggle" title="Toggle pet mode: drag Kurisu anywhere">
-          <span class="pet-toggle-led"></span>
-          <span class="pet-toggle-label">PET</span>
-          <span class="pet-toggle-state" id="pet-toggle-state">OFF</span>
-        </button>
-        <button class="interact-toggle" id="interact-toggle" title="Toggle interact mode: click on Kurisu to talk">
-          <span class="interact-toggle-led"></span>
-          <span class="interact-toggle-label">TALK</span>
-          <span class="interact-toggle-state" id="interact-toggle-state">OFF</span>
-        </button>
-        <span class="status-indicator online">SYSTEM_COHERENT</span>
+        <span class="panel-tag" id="temporal-title">// COGNITIVE_TEMPORAL_RES</span>
+        <div class="panel-header-actions" aria-label="Avatar interaction modes">
+          <button class="mode-toggle pet-toggle" id="pet-toggle" type="button"
+            title="Toggle pet mode: drag Kurisu anywhere" aria-pressed="false">
+            <span class="mode-led pet-toggle-led" aria-hidden="true"></span>
+            <span class="pet-toggle-label">PET</span>
+            <span class="mode-state pet-toggle-state" id="pet-toggle-state">OFF</span>
+          </button>
+          <button class="mode-toggle interact-toggle" id="interact-toggle" type="button"
+            title="Toggle talk mode: click Kurisu to talk" aria-pressed="false">
+            <span class="mode-led interact-toggle-led" aria-hidden="true"></span>
+            <span class="interact-toggle-label">TALK</span>
+            <span class="mode-state interact-toggle-state" id="interact-toggle-state">OFF</span>
+          </button>
+        </div>
       </div>
-      <div class="panel-body">
-        <div id="hud-clock" class="nixie-clock">
+
+      <div class="temporal-readout">
+        <div id="hud-clock" class="nixie-clock" aria-label="Current time">
           <span class="clock-tube" data-digit="0">0</span>
           <span class="clock-tube" data-digit="1">0</span>
           <span class="clock-sep">:</span>
@@ -97,203 +92,235 @@
           <span class="clock-tube" data-digit="5">0</span>
         </div>
         <div id="hud-date">YYYY.MM.DD</div>
-        <div class="divergence-meter-wrap" title="Divergence Meter (Click to recalculate worldline)">
-          <canvas id="divergence-canvas"></canvas>
+      </div>
+
+      <div class="divergence-meter-wrap" title="Divergence meter — click to recalculate world line">
+        <span class="instrument-label">DIVERGENCE</span>
+        <canvas id="divergence-canvas" aria-label="World-line divergence meter; click to recalculate"></canvas>
+      </div>
+
+      <div class="system-alerts" aria-label="System status">
+        <span class="alert-item status-live" id="hud-kernel"><span class="bullet" aria-hidden="true"></span> KERNEL: ACTIVE_SYNC</span>
+        <span class="alert-item status-offline" id="hud-uplink"><span class="bullet" aria-hidden="true"></span> UPLINK: LIVE_FEED</span>
+        <span class="alert-item" id="hud-focus" hidden title="Focus mode — click to start a 25-minute session"><span class="bullet" aria-hidden="true"></span> FOCUS: 25:00</span>
+        <div id="amadeus-crash-banner" class="crash-banner" role="alert"></div>
+        <span class="alert-item" id="hud-divergence" hidden><span class="bullet" aria-hidden="true"></span> DIV: 0.000000</span>
+      </div>
+
+      <div class="now-playing" id="now-playing" aria-label="Now playing">
+        <div class="np-header">
+          <span class="np-label">// NOW_PLAYING</span>
+          <span class="np-status-led" aria-hidden="true"></span>
         </div>
-        <div class="system-alerts">
-          <span class="alert-item" id="hud-kernel"><span class="bullet"></span> KERNEL: ACTIVE_SYNC</span>
-          <span class="alert-item" id="hud-uplink"><span class="bullet"></span> UPLINK: LIVE_FEED</span>
-          <span class="alert-item" id="hud-divergence" style="display:none"><span class="bullet"></span> DIV: 0.000000</span>
-        </div>
-        <div class="now-playing" id="now-playing">
-          <div class="np-header">
-            <span class="np-label">// NOW_PLAYING</span>
-            <span class="np-status-led"></span>
-          </div>
-          <div class="np-track" id="now-playing-track">AUDIO_FEED_IDLE</div>
-          <div class="np-artist" id="now-playing-artist"></div>
-          <div class="media-controls-row">
-            <button class="media-btn" id="media-prev" data-media-act="previous" title="Previous Track" aria-label="Previous Track">|◀</button>
-            <button class="media-btn media-play-btn" id="media-play-pause" data-media-act="play_pause"
-              title="Play/Pause" aria-label="Play/Pause">▶</button>
-            <button class="media-btn" id="media-next" data-media-act="next" title="Next Track" aria-label="Next Track">▶|</button>
-            <div class="media-vol-group">
-              <button class="media-btn media-vol-btn" id="media-vol-down" data-media-act="volume_down"
-                title="Volume Down" aria-label="Volume Down">-</button>
-              <span class="media-vol-icon" aria-hidden="true">🔊</span>
-              <button class="media-btn media-vol-btn" id="media-vol-up" data-media-act="volume_up"
-                title="Volume Up" aria-label="Volume Up">+</button>
-            </div>
+        <div class="np-track" id="now-playing-track">AUDIO_FEED_IDLE</div>
+        <div class="np-artist" id="now-playing-artist"></div>
+        <div class="media-controls-row" aria-label="Media controls">
+          <button class="media-btn" id="media-prev" data-media-act="previous" type="button"
+            title="Previous track" aria-label="Previous track">|&lt;</button>
+          <button class="media-btn media-play-btn" id="media-play-pause" data-media-act="play_pause" type="button"
+            title="Play" aria-label="Play">&gt;</button>
+          <button class="media-btn" id="media-next" data-media-act="next" type="button"
+            title="Next track" aria-label="Next track">&gt;|</button>
+          <div class="media-vol-group" aria-label="Volume controls">
+            <button class="media-btn media-vol-btn" id="media-vol-down" data-media-act="volume_down" type="button"
+              title="Volume down" aria-label="Volume down">−</button>
+            <span class="media-vol-icon" aria-hidden="true">VOL</span>
+            <button class="media-btn media-vol-btn" id="media-vol-up" data-media-act="volume_up" type="button"
+              title="Volume up" aria-label="Volume up">+</button>
           </div>
         </div>
       </div>
-    </header>
+    </section>
 
-    <!-- TOP RIGHT: Phosphor Oscilloscope -->
-    <section class="hud-panel top-right-panel">
+    <!-- Upper-right signal service bay. -->
+    <section class="hud-panel signal-bay top-right-panel" aria-labelledby="signal-title">
       <div class="world-line-monitor">
         <div class="panel-header">
-          <span class="panel-tag">// PHOSPHOR_OSCILLOSCOPE</span>
-          <span class="pulse-text">LIVE_TRACE</span>
+          <span class="panel-tag" id="signal-title">// PHOSPHOR_OSCILLOSCOPE</span>
+          <span class="status-readout status-live" id="scope-status">SIGNAL_MONITOR</span>
         </div>
-        <div class="world-line-frame">
+        <div class="world-line-frame" role="img" aria-label="Live audio signal and Kurisu mind-energy oscilloscope">
           <canvas id="world-line-canvas"></canvas>
         </div>
-        <div class="world-line-meta">
+        <div class="world-line-meta" aria-live="polite">
           <span id="wl-audio">SIG 0%</span>
           <span id="wl-mind">MIND 30%</span>
-        </div><div class="settings-group">
-            <div class="settings-title">SYSTEM</div>
-            <label class="setting-row"><span>Cinematic Mode</span><button id="btn-cinematic-toggle" class="media-btn">ENTER CINEMATIC</button><button id="cinematic-exit-btn" class="media-btn" style="display:none">EXIT</button></label>
-            <label class="setting-row"><span>Layout</span><button id="btn-reset-positions" class="media-btn">RESET POSITIONS</button></label>
-          </div>
+        </div>
       </div>
     </section>
 
-    <!-- BOTTOM LEFT: Live News Feed & Business Ops -->
-    <section class="hud-panel bottom-left-panel">
+    <!-- Lower-left information feed bay. -->
+    <section class="hud-panel feed-bay bottom-left-panel" aria-labelledby="feed-tag">
       <div class="panel-header">
-        <span class="panel-tag feed-toggle" id="feed-tag" 
-          title="Click to toggle News / Business Ops">// REALTIME_NEWS_FEED</span>
-        <span class="pulse-text" id="news-status">LIVE_SYNC</span>
+        <button class="panel-tag feed-toggle" id="feed-tag" type="button"
+          title="Toggle News and Business Ops feed" aria-label="Toggle News and Business Ops feed">// REALTIME_NEWS_FEED</button>
+        <span class="status-readout status-loading" id="news-status" aria-live="polite">FETCHING</span>
       </div>
       <div class="panel-body news-panel-body">
-        <div class="news-container" id="news-feed">
-          <div class="news-loading">> Fetching global intelligence feed...</div>
+        <div class="news-container" id="news-feed" tabindex="0" aria-label="Realtime intelligence feed">
+          <div class="news-loading">&gt; Fetching global intelligence feed...</div>
         </div>
       </div>
     </section>
 
-    <!-- RIGHT STACK: Chat + Task Matrix + System Options -->
-    <div class="right-stack">
-      <!-- BOTTOM CENTER: Kurisu Chat Terminal (transcript log + live input) -->
-      <section class="hud-panel chat-panel" id="chat-panel">
+    <!-- Lower-right operational chassis: chat first, tasks second. -->
+    <div class="right-stack" aria-label="AMADEUS personal console">
+      <section class="hud-panel chat-panel" id="chat-panel" aria-labelledby="chat-title">
         <div class="panel-header">
-          <span class="panel-tag">// AMADEUS_TERMINAL</span>
-          <span class="pulse-text chat-uplink" id="chat-uplink">UPLINK: CHECK</span>
+          <span class="panel-tag" id="chat-title">// AMADEUS_TERMINAL</span>
+          <span class="status-readout chat-uplink status-loading" id="chat-uplink" aria-live="polite">UPLINK: CHECK</span>
         </div>
-        <div class="chat-log" id="chat-log"></div>
+        <div class="chat-log" id="chat-log" role="log" aria-live="polite" aria-label="Conversation transcript"></div>
+        <div class="chat-input-label">
+          <label for="kurisu-input">Message Kurisu</label>
+          <span>ENTER TO SEND</span>
+        </div>
         <div class="chat-input-row">
-          <button class="chat-mic" id="chat-mic" aria-label="Push to talk" type="button" title="Push to talk (Ctrl+Shift+M)">🎙️</button>
-          <input class="chat-input" id="kurisu-input" type="text" placeholder="> transmit to Kurisu... [Enter]"
+          <button class="chat-mic" id="chat-mic" type="button" aria-label="Push to talk"
+            title="Push to talk (Ctrl+Shift+M)">MIC</button>
+          <input class="chat-input" id="kurisu-input" type="text" placeholder="> transmit to Kurisu..."
             autocomplete="off" spellcheck="false" aria-label="Transmit message to Kurisu">
           <button class="chat-send" id="chat-send" type="button">SEND</button>
         </div>
       </section>
 
-      <!-- RIGHT CENTER: Obsidian Daily Task Matrix -->
-      <section class="hud-panel task-widget-panel" id="task-widget-panel">
-        <div class="panel-header task-widget-header" id="task-widget-header"
-          title="Toggle Task Matrix (Ctrl+T)">
-          <span class="panel-tag">// OBSIDIAN_TASK_MATRIX</span>
-          <span class="pulse-text" id="task-badge">0/0 DONE</span>
-          <span class="task-toggle-state" id="task-toggle-state">COLLAPSE</span>
-        </div>
+      <section class="hud-panel task-widget-panel" id="task-widget-panel" aria-labelledby="task-title">
+        <button class="panel-header task-widget-header" id="task-widget-header" type="button"
+          title="Toggle task matrix (Ctrl+T)" aria-expanded="true" aria-controls="task-widget-body">
+          <span class="panel-tag" id="task-title">// OBSIDIAN_TASK_MATRIX</span>
+          <span class="task-header-state">
+            <span class="status-readout status-measurement" id="task-badge">0/0 DONE</span>
+            <span class="task-toggle-state" id="task-toggle-state">COLLAPSE</span>
+          </span>
+        </button>
         <div class="task-widget-body" id="task-widget-body">
           <div class="task-meta-row">
             <span class="task-meta-label">DAILY_OBJECTIVES</span>
-            <button class="para-organize-btn" id="para-organize-btn" type="button" title="Auto-organize 00_Inbox via PARA" >⚡ PARA SYNC</button>
             <span class="task-meta-count" id="task-count">[0%]</span>
+            <button class="para-organize-btn" id="para-organize-btn" type="button"
+              title="Organize 00_Inbox with PARA" aria-describedby="task-sync-status">PARA SYNC</button>
+            <span class="task-sync-status" id="task-sync-status" role="status" aria-live="polite"></span>
           </div>
-          <div class="task-list" id="task-list"></div>
+          <div class="task-list" id="task-list" aria-label="Daily objectives"></div>
+          <div class="task-input-label">
+            <label for="task-new-input">Add objective</label>
+            <span>ENTER TO ADD</span>
+          </div>
           <div class="task-input-row">
-            <input type="text" id="task-new-input" class="task-new-input" placeholder="+ Add daily task... [Enter]" aria-label="Add daily task"
-              spellcheck="false">
-            <button id="task-new-btn" class="task-new-btn">+</button>
-          </div>
-        </div>
-      </section>
-
-      <!-- BOTTOM RIGHT: System Options (settings panel) -->
-      <section class="hud-panel settings-panel" id="settings-panel">
-        <div class="panel-header settings-header" id="settings-toggle">
-          <span class="panel-tag">// SYSTEM_OPTS</span>
-          <span class="pulse-text" id="settings-state">EXPAND</span>
-        </div>
-        <div class="settings-body" id="settings-body" style="display: none;">
-          <div class="settings-group">
-            <div class="settings-title">DISPLAY</div>
-            <label class="setting-row"><span>Oscilloscope</span><input type="checkbox" data-widget="scope"
-                checked></label>
-            <label class="setting-row"><span>News Feed</span><input type="checkbox" data-widget="news" checked></label>
-            <label class="setting-row"><span>Clock + Alerts</span><input type="checkbox" data-widget="clock"
-                checked></label>
-            <label class="setting-row"><span>Audio Ring</span><input type="checkbox" data-widget="ring" checked></label>
-            <label class="setting-row"><span>Chat Terminal</span><input type="checkbox" data-widget="chat"
-                checked></label>
-            <label class="setting-row"><span>CRT / Vignette</span><input type="checkbox" data-widget="crt"
-                checked></label>
-            <label class="setting-row"><span>Ambient BG</span><input type="checkbox" data-widget="bg" checked></label>
-            <label class="setting-row"><span>Terminal SFX</span><input type="checkbox" id="setting-sfx" checked></label>
-            <label class="setting-row"><span>PET_MODE</span><input type="checkbox" id="setting-pet" checked></label>
-            <label class="setting-row"><span>Voice Replies</span><input type="checkbox" id="setting-voice"
-                checked></label>
-            <label class="setting-row"><span>Theme</span><select id="setting-theme"><option value="skuld">SKULD</option><option value="amber">AMBER</option><option value="sg0">SG0</option><option value="amadeus">AMADEUS</option></select></label>
-          </div>
-          <div class="settings-group">
-            <div class="settings-title">KURISU</div>
-            <label class="setting-row"><span>Idle Gestures</span><input type="checkbox" data-feature="idleGestures"
-                checked></label>
-            <label class="setting-row"><span>Ambient Motions</span><input type="checkbox" data-feature="ambientMotions"
-                checked></label>
-            <label class="setting-row"><span>Easter Eggs</span><input type="checkbox" data-feature="easterEggs"
-                checked></label>
-            <label class="setting-row"><span>News Reactions</span><input type="checkbox" data-feature="newsReactions"
-                checked></label>
-            <label class="setting-row"><span>Music Mood</span><input type="checkbox" data-feature="musicMood"
-                checked></label>
-            <label class="setting-row"><span>Posture Fatigue</span><input type="checkbox" data-feature="postureFatigue"
-                checked></label>
-          </div>
-          <div class="settings-group">
-            <div class="settings-title">OSCILLOSCOPE</div>
-            <label class="setting-row"><span>Speed</span><input type="range" id="scope-speed" min="1" max="10" step="1"
-                value="5"></label>
-            <label class="setting-row"><span>Density</span><input type="range" id="scope-density" min="1" max="10"
-                step="1" value="5"></label>
-            <label class="setting-row"><span>Sound Color</span><input type="color" id="scope-ch1" value="#ff4d55"></label>
-            <label class="setting-row"><span>Brain Color</span><input type="color" id="scope-ch2" value="#ff55aa"></label>
+            <input type="text" id="task-new-input" class="task-new-input" placeholder="Add daily task..."
+              aria-label="Add daily task" spellcheck="false">
+            <button id="task-new-btn" class="task-new-btn" type="button" aria-label="Add daily task">+</button>
           </div>
         </div>
       </section>
     </div>
 
-    <!-- KEYBOARD SHORTCUTS MATRIX MODAL (Ctrl+/) -->
+    <!-- Center stage datum. It stays visible while peripheral bays fade in cinematic mode. -->
+    <div class="stage-datum" id="stage-datum" role="status" aria-label="System status">
+      <span class="stage-datum-marker" aria-hidden="true"></span>
+      <span class="stage-datum-label">SYSTEM_COHERENT</span>
+      <span class="stage-datum-detail">STAGE READY</span>
+    </div>
+
+    <!-- Fixed right-edge settings drawer. -->
+    <aside class="settings-panel" id="settings-panel" aria-label="System options">
+      <button class="settings-handle" id="settings-toggle" type="button" aria-expanded="false"
+        aria-controls="settings-body" aria-label="Open system options">
+        <span class="settings-handle-label">SYSTEM_OPTS</span>
+        <span class="settings-handle-state" id="settings-state">OPEN</span>
+      </button>
+      <div class="settings-body" id="settings-body" hidden aria-hidden="true">
+        <div class="settings-body-heading">
+          <span class="panel-tag">SYSTEM OPTIONS</span>
+          <span class="settings-body-note">PERSISTED LOCALLY</span>
+        </div>
+
+        <div class="settings-group settings-system-group">
+          <div class="settings-title">SYSTEM</div>
+          <div class="setting-row setting-row-actions">
+            <span>Cinematic mode</span>
+            <span class="setting-actions">
+              <button id="btn-cinematic-toggle" class="media-btn" type="button" aria-pressed="false">ENTER CINEMATIC</button>
+              <button id="cinematic-exit-btn" class="media-btn" type="button" hidden>EXIT</button>
+            </span>
+          </div>
+          <div class="setting-row setting-status-row">
+            <span>Stage focus</span>
+            <span class="setting-value" id="cinematic-state">STANDBY</span>
+          </div>
+          <div class="setting-row setting-row-actions">
+            <span>Layout</span>
+            <button id="btn-reset-positions" class="maintenance-btn" type="button">RESET POSITIONS</button>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-title">DISPLAY</div>
+          <label class="setting-row"><span>Oscilloscope</span><input type="checkbox" data-widget="scope" checked></label>
+          <label class="setting-row"><span>News feed</span><input type="checkbox" data-widget="news" checked></label>
+          <label class="setting-row"><span>Clock + alerts</span><input type="checkbox" data-widget="clock" checked></label>
+          <label class="setting-row"><span>Audio ring</span><input type="checkbox" data-widget="ring" checked></label>
+          <label class="setting-row"><span>Chat terminal</span><input type="checkbox" data-widget="chat" checked></label>
+          <label class="setting-row"><span>CRT / vignette</span><input type="checkbox" data-widget="crt" checked></label>
+          <label class="setting-row"><span>Ambient background</span><input type="checkbox" data-widget="bg" checked></label>
+          <label class="setting-row"><span>Terminal SFX</span><input type="checkbox" id="setting-sfx" checked></label>
+          <label class="setting-row"><span>Pet mode</span><input type="checkbox" id="setting-pet" checked></label>
+          <label class="setting-row"><span>Voice replies</span><input type="checkbox" id="setting-voice" checked></label>
+          <label class="setting-row"><span>Theme</span><select id="setting-theme"><option value="skuld">SKULD</option><option value="amber">AMBER</option><option value="sg0">SG0</option><option value="amadeus">AMADEUS</option></select></label>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-title">KURISU</div>
+          <label class="setting-row"><span>Idle gestures</span><input type="checkbox" data-feature="idleGestures" checked></label>
+          <label class="setting-row"><span>Ambient motions</span><input type="checkbox" data-feature="ambientMotions" checked></label>
+          <label class="setting-row"><span>Easter eggs</span><input type="checkbox" data-feature="easterEggs" checked></label>
+          <label class="setting-row"><span>News reactions</span><input type="checkbox" data-feature="newsReactions" checked></label>
+          <label class="setting-row"><span>Music mood</span><input type="checkbox" data-feature="musicMood" checked></label>
+          <label class="setting-row"><span>Posture fatigue</span><input type="checkbox" data-feature="postureFatigue" checked></label>
+          <label class="setting-row"><span>Focus mode</span><input type="checkbox" data-feature="focusMode" checked></label>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-title">OSCILLOSCOPE</div>
+          <label class="setting-row"><span>Speed</span><input type="range" id="scope-speed" min="1" max="10" step="1" value="5"></label>
+          <label class="setting-row"><span>Density</span><input type="range" id="scope-density" min="1" max="10" step="1" value="5"></label>
+          <label class="setting-row"><span>Sound color</span><input type="color" id="scope-ch1" value="#ff4d55"></label>
+          <label class="setting-row"><span>Mind color</span><input type="color" id="scope-ch2" value="#ff55aa"></label>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Keyboard shortcuts matrix modal (Ctrl+/). -->
     <div id="keybind-overlay" class="keybind-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="keybind-title">
       <div class="keybind-modal">
         <div class="keybind-header">
-          <span class="keybind-title">// AMADEUS SYSTEM — SHORTCUT MATRIX</span>
-          <button id="keybind-close" aria-label="Close shortcut matrix" class="keybind-close" title="Close [ESC]">✕</button>
+          <span class="keybind-title" id="keybind-title">// AMADEUS SYSTEM — SHORTCUT MATRIX</span>
+          <button id="keybind-close" type="button" aria-label="Close shortcut matrix" class="keybind-close" title="Close [ESC]">X</button>
         </div>
         <div class="keybind-grid">
           <div class="keybind-sec">
-            <div class="keybind-sec-title">INTERACTIONS & CHAT</div>
+            <div class="keybind-sec-title">INTERACTIONS &amp; CHAT</div>
             <div class="keybind-row"><kbd>Enter</kbd><span>Transmit text to Kurisu</span></div>
-            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>M</kbd><span>Push to Talk (Microphone
-                STT)</span></div>
-            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd><span>Screen Co-Pilot Vision
-                Inspect</span></div>
-            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>X</kbd><span>Wipe chat logs &
-                history</span></div>
-            <div class="keybind-row"><kbd>Escape</kbd><span>Clear input / dismiss bubble</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>M</kbd><span>Push to Talk</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd><span>Screen Co-Pilot vision inspect</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>X</kbd><span>Wipe chat logs and history</span></div>
+            <div class="keybind-row"><kbd>Escape</kbd><span>Clear input or dismiss bubble</span></div>
             <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>/</kbd><span>Toggle this shortcut matrix</span></div>
           </div>
           <div class="keybind-sec">
-            <div class="keybind-sec-title">DESKTOP GESTURES & HUD</div>
-            <div class="keybind-row"><kbd>Click Avatar</kbd><span>Poke Kurisu for reaction line</span></div>
-            <div class="keybind-row"><kbd>Click Meter</kbd><span>Recalculate Worldline Divergence</span></div>
-            <div class="keybind-row"><kbd>Click Tag</kbd><span>Toggle News / Business Ops Feed</span></div>
-            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>T</kbd><span>Toggle Obsidian Task Matrix</span></div>
-            <div class="keybind-row"><kbd>PET_MODE</kbd><span>Drag Kurisu anywhere on desktop</span></div>
-            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd><span>Toggle Live2D debug
-                inspector</span></div>
+            <div class="keybind-sec-title">DESKTOP GESTURES &amp; HUD</div>
+            <div class="keybind-row"><kbd>Click avatar</kbd><span>Poke Kurisu for a reaction</span></div>
+            <div class="keybind-row"><kbd>Click meter</kbd><span>Recalculate world-line divergence</span></div>
+            <div class="keybind-row"><kbd>Click feed label</kbd><span>Toggle News and Business Ops</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>T</kbd><span>Toggle task matrix</span></div>
+            <div class="keybind-row"><kbd>PET</kbd><span>Drag Kurisu anywhere on desktop</span></div>
+            <div class="keybind-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd><span>Toggle Live2D debug inspector</span></div>
           </div>
         </div>
         <div class="keybind-footer">Press <kbd>ESC</kbd> or click outside to dismiss</div>
       </div>
     </div>
-
-  </div>
+  </main>
 
   <script src="openrouter-key.js"></script>
   <script src="brain-key.js"></script>
@@ -319,6 +346,7 @@
   <script src="src/modules/uplink.js"></script>
   <script src="src/modules/lively.js"></script>
   <script src="src/modules/task-widget.js"></script>
+      <script src="src/modules/focus.js"></script>
   <script src="src/modules/media-player.js"></script>
   <script src="src/wallpaper.js"></script>
 </body>

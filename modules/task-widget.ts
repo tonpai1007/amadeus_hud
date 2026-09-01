@@ -15,6 +15,72 @@ window.AMADEUS = window.AMADEUS || ({} as any);
 
   let tasks = [];
   let isExpanded = true;
+  let paraSyncTimer = null;
+
+  // Steins;Gate-flavored praise lines, shown once per completion (non-repeating)
+  const TASK_PRAISE_LINES = [
+    "Good. One less thing on the board.",
+    "Hmph. Efficient. I'll allow it.",
+    "Task cleared. The lab log approves.",
+    "Not bad. Even Okabe couldn't have botched... I mean, done it better.",
+    "Progress recorded. The world line inches toward a better outcome.",
+    "One step closer to finishing. Don't lose the momentum.",
+    "Deleted from the backlog. Satisfying, isn't it?",
+    "Item closed. My simulations predicted you'd manage that one.",
+  ];
+  let lastPraiseIdx = -1;
+
+  function taskPraiseLine() {
+    // Prefer the shared cross-restart dedup helper (state.ts); fall back to a
+    // session-local non-repeat picker.
+    if (window.AMADEUS.pickFreshLine) {
+      return window.AMADEUS.pickFreshLine('taskPraise', TASK_PRAISE_LINES);
+    }
+    let idx = Math.floor(Math.random() * TASK_PRAISE_LINES.length);
+    if (TASK_PRAISE_LINES.length > 1) {
+      while (idx === lastPraiseIdx) idx = Math.floor(Math.random() * TASK_PRAISE_LINES.length);
+    }
+    lastPraiseIdx = idx;
+    return TASK_PRAISE_LINES[idx];
+  }
+
+  // Completion reaction: praise bubble + mood nudge, gated like bubble.ts
+  // idle chatter (never while idle/asleep or mid-sentence). Clearing the whole
+  // board triggers a one-time Steins Gate divergence shift celebration.
+  let allDoneCelebrated = false;
+
+  function reactToTaskCompletion() {
+    const s = window.AMADEUS.state;
+    if (!s || s.isIdle || s.isSleeping) return;
+    if (window.AMADEUS.mood && window.AMADEUS.mood.adjustMood) {
+      window.AMADEUS.mood.adjustMood(2);
+    }
+    const bubbleEl = document.getElementById('kurisu-bubble');
+    if (bubbleEl && bubbleEl.classList.contains('visible')) return;
+
+    const remaining = tasks.filter((t) => !t.completed).length;
+    if (remaining === 0 && tasks.length > 0) {
+      if (allDoneCelebrated) return;
+      allDoneCelebrated = true;
+      // All objectives cleared → converge the world line on Steins Gate
+      if (window.AMADEUS.divergence && window.AMADEUS.divergence.triggerWorldlineShift) {
+        window.AMADEUS.divergence.triggerWorldlineShift(1.048596);
+      }
+      if (window.AMADEUS.bubble && window.AMADEUS.bubble.showKurisuBubble) {
+        window.AMADEUS.bubble.showKurisuBubble('All objectives cleared. This is the choice of Steins Gate... or at least of a productive afternoon.', 8000);
+      }
+      return;
+    }
+    allDoneCelebrated = false;
+    // Partial progress still bends the world line toward Steins Gate,
+    // proportionally to how much of the board is cleared.
+    if (tasks.length > 0 && window.AMADEUS.divergence && window.AMADEUS.divergence.applyTaskNudge) {
+      window.AMADEUS.divergence.applyTaskNudge(tasks.filter((t) => t.completed).length / tasks.length);
+    }
+    if (window.AMADEUS.bubble && window.AMADEUS.bubble.showKurisuBubble) {
+      window.AMADEUS.bubble.showKurisuBubble(taskPraiseLine(), 5000);
+    }
+  }
 
   function loadCachedTasks() {
     try {
@@ -98,7 +164,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
           <span class="task-custom-chk"></span>
         </label>
         <span class="task-text">${window.AMADEUS.escapeHtml(t.text)}</span>
-        <button class="task-del" data-id="${t.id}" title="Remove task" aria-label="Remove task">✕</button>
+        <button class="task-del" data-id="${t.id}" title="Remove task" aria-label="Remove task">DEL</button>
       `;
       listEl.appendChild(item);
     });
@@ -115,6 +181,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
           window.AMADEUS?.sfx?.playPokeSound?.();
           if (task.completed) {
             window.AMADEUS?.state?.live2DController?.setEmotion?.('happy', 4000);
+            reactToTaskCompletion();
           }
           saveTasks();
           syncTaskWithBrain(task, 'toggle');
@@ -145,12 +212,45 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     window.AMADEUS?.sfx?.playTransmitSound?.();
   }
 
-  function toggleWidget() {
+  function updateTaskDisclosureUi(expanded) {
     const body = document.getElementById('task-widget-body');
+    const header = document.getElementById('task-widget-header');
     const stateText = document.getElementById('task-toggle-state');
-    isExpanded = !isExpanded;
-    if (body) body.style.display = isExpanded ? 'block' : 'none';
+    isExpanded = !!expanded;
+    if (body) body.hidden = !isExpanded;
+    if (header) header.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
     if (stateText) stateText.textContent = isExpanded ? 'COLLAPSE' : 'EXPAND';
+  }
+
+  function toggleWidget() {
+    updateTaskDisclosureUi(!isExpanded);
+  }
+
+  function setParaSyncState(state, message = '') {
+    const button = document.getElementById('para-organize-btn') as HTMLButtonElement | null;
+    const status = document.getElementById('task-sync-status');
+    if (!button || !status) return;
+
+    const labels = {
+      idle: 'PARA SYNC',
+      syncing: 'SYNCING...',
+      success: 'PARA SYNC',
+      error: 'RETRY SYNC',
+    };
+    button.textContent = labels[state] || labels.idle;
+    button.disabled = state === 'syncing';
+    if (state === 'syncing') button.setAttribute('aria-busy', 'true');
+    else button.removeAttribute('aria-busy');
+
+    status.dataset.state = state;
+    status.textContent = message;
+    if (paraSyncTimer) {
+      clearTimeout(paraSyncTimer);
+      paraSyncTimer = null;
+    }
+    if (state === 'success' || state === 'error') {
+      paraSyncTimer = setTimeout(() => setParaSyncState('idle'), 5000);
+    }
   }
 
   function initTaskWidget() {
@@ -163,6 +263,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     const addBtn = document.getElementById('task-new-btn');
 
     if (header) header.addEventListener('click', toggleWidget);
+    updateTaskDisclosureUi(true);
 
     const submitNew = () => {
       if (input?.value) {
@@ -203,11 +304,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
   }
 
   async function autoOrganizeVault() {
-    const badgeEl = document.getElementById('task-badge');
-    const prevText = badgeEl ? badgeEl.textContent : '';
-    if (badgeEl) badgeEl.textContent = 'PARA SYNCING...';
-
     const l2d = window.AMADEUS?.state?.live2DController;
+    setParaSyncState('syncing', 'Organizing 00_Inbox');
     if (l2d && l2d.setEmotion) l2d.setEmotion('thinking', 4000);
 
     try {
@@ -217,25 +315,23 @@ window.AMADEUS = window.AMADEUS || ({} as any);
         method: 'POST',
         headers: client.getHeaders(),
       });
-      if (resp.ok) {
-        const data = await resp.json();
-        const relocated = data.relocated_count || 0;
-        const msg = relocated > 0
-          ? `00_Inboxから${relocated}件のメモをPARA各フォルダへ自動分類・整理したわ！`
-          : '00_Inboxはすでに綺麗に整理されているわ。素晴らしいわね。';
+      if (!resp.ok) throw new Error(`PARA sync HTTP ${resp.status}`);
 
-        if (window.AMADEUS.bubble && window.AMADEUS.bubble.showKurisuBubble) {
-          window.AMADEUS.bubble.showKurisuBubble(msg, 6000);
-        }
-        if (l2d && l2d.setEmotion) l2d.setEmotion('happy', 4000);
-        if (badgeEl) badgeEl.textContent = `SYNCED: ${relocated}`;
-        setTimeout(() => { if (badgeEl) badgeEl.textContent = prevText; }, 5000);
-        return;
+      const data = await resp.json();
+      const relocated = data.relocated_count || 0;
+      const msg = relocated > 0
+        ? `00_Inboxから${relocated}件のメモをPARA各フォルダへ自動分類・整理したわ！`
+        : '00_Inboxはすでに綺麗に整理されているわ。素晴らしいわね。';
+
+      if (window.AMADEUS.bubble && window.AMADEUS.bubble.showKurisuBubble) {
+        window.AMADEUS.bubble.showKurisuBubble(msg, 6000);
       }
+      if (l2d && l2d.setEmotion) l2d.setEmotion('happy', 4000);
+      setParaSyncState('success', relocated > 0 ? `Moved ${relocated} item${relocated === 1 ? '' : 's'}` : '00_Inbox already clear');
     } catch (e) {
-      console.warn("PARA auto-organize failed:", e);
+      console.warn('PARA auto-organize failed:', e);
+      setParaSyncState('error', 'Sync unavailable');
     }
-    if (badgeEl) badgeEl.textContent = prevText;
   }
 
   /**

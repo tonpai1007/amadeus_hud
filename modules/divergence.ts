@@ -72,6 +72,17 @@ declare const window: any;
     return Math.max(0.000001, Number(base.toFixed(6)));
   }
 
+  // Task-completion tie-in: finishing work nudges the world line toward the
+  // Steins;Gate attractor (1.048596). The mood-baseline drift in
+  // updateDivergence slowly pulls it back, so the nudge decays naturally.
+  function applyTaskNudge(progress: number): void {
+    const p = Math.max(0, Math.min(1, Number(progress) || 0));
+    if (p <= 0) return;
+    const goal = 1.048596;
+    targetDivergence += (goal - targetDivergence) * 0.02 * p;
+    targetDivergence = Math.max(0.000001, targetDivergence);
+  }
+
   function triggerWorldlineShift(customTarget?: number): void {
     if (customTarget !== undefined) {
       targetDivergence = customTarget;
@@ -241,12 +252,15 @@ declare const window: any;
    * AMADEUS Steins;Gate holographic Nixie divergence meter.
    * @property {() => void} initDivergence - Binds #divergence-canvas, sizes it and wires the click-to-recalculate handler. Rendering is driven by the master visual tick.
    * @property {(customTarget?: number) => void} triggerWorldlineShift - Starts a rolling recalculation toward a random (or given) divergence value.
+   * @property {(progress: number) => void} applyTaskNudge - Nudges the target divergence toward the Steins;Gate line proportionally to task progress (0-1).
    * @property {(now: number) => void} renderDivergence - Advances the divergence simulation and paints one nixie frame (skips while the panel is hidden).
    * @property {() => number} getDivergence - Current displayed divergence value.
    */
   (window as any).AMADEUS.divergence = {
     initDivergence,
     triggerWorldlineShift,
+    applyTaskNudge,
+    updateDivergence,
     renderDivergence,
     calculateBaselineDivergence,
     getDivergence: () => currentDivergence,

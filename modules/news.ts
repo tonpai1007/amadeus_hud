@@ -145,6 +145,12 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     }
   }
 
+  function setFeedStatus(statusEl, label, state = 'status-loading') {
+    if (!statusEl) return;
+    statusEl.className = `status-readout ${state}`;
+    statusEl.innerText = label;
+  }
+
   function toggleFeedMode() {
     if (feedMode === 'news') {
       feedMode = 'trendshift';
@@ -173,8 +179,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     if (!container || !statusEl) return;
 
     container.innerHTML = '<div class="news-item"><div class="news-title">Scouting Trendshift weekly repositories...</div></div>';
-    statusEl.innerText = 'SCOUTING';
-    statusEl.className = 'pulse-text';
+    container.dataset.feedState = 'scouting';
+    setFeedStatus(statusEl, 'SCOUTING', 'status-busy');
 
     try {
       const brain = window.KURISU_BRAIN || (window.AMADEUS.chat && window.AMADEUS.chat.KURISU_BRAIN) || {};
@@ -187,9 +193,9 @@ window.AMADEUS = window.AMADEUS || ({} as any);
 
       if (!evals.length) throw new Error("No discoveries returned");
 
-      container.innerHTML = '';
-      statusEl.innerText = `DISCOVERIES (${data.high_value_count || 0})`;
-      statusEl.className = 'pulse-text';
+       container.innerHTML = '';
+       container.dataset.feedState = 'live';
+       setFeedStatus(statusEl, `DISCOVERIES (${data.high_value_count || 0})`, 'status-live');
 
       evals.forEach(e => {
         const item = document.createElement('a');
@@ -212,7 +218,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
         const tag = (score >= 8) ? 'AGI_HIGH_VALUE' : 'GITHUB_TREND';
         const esc = window.AMADEUS.escapeHtml;
         metaDiv.innerHTML = `
-          <span class="news-score" style="color:${score >= 8 ? '#00ffcc' : '#ff4d55'};">▲ ${score}/10</span>
+          <span class="news-score">${score >= 8 ? 'HIGH' : 'WATCH'}</span>
           <span class="news-time">${esc(e.key_innovation ? e.key_innovation.substring(0, 42) + '...' : 'Trending')}</span>
           <span class="news-domain">[ ${esc(tag)} ]</span>
         `;
@@ -227,7 +233,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
         <div class="news-item">
           <div class="news-title">Hermes Agent: Autonomous AGI Matrix</div>
           <div class="news-meta">
-            <span class="news-score" style="color:#00ffcc;">▲ 8/10</span>
+            <span class="news-score">HIGH</span>
             <span class="news-time">Self-Evolving Cognitive Core</span>
             <span class="news-domain">[ AGI_HIGH ]</span>
           </div>
@@ -235,7 +241,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
         <div class="news-item">
           <div class="news-title">Learn Claude Code: Interactive CLI Subagents</div>
           <div class="news-meta">
-            <span class="news-score" style="color:#ff4d55;">▲ 7/10</span>
+            <span class="news-score">WATCH</span>
             <span class="news-time">Tool-Calling Multi-Agent</span>
             <span class="news-domain">[ AGENTIC ]</span>
           </div>
@@ -243,13 +249,14 @@ window.AMADEUS = window.AMADEUS || ({} as any);
         <div class="news-item">
           <div class="news-title">Open Connector: Universal Protocol Gateway</div>
           <div class="news-meta">
-            <span class="news-score" style="color:#ff9e42;">▲ 5/10</span>
+            <span class="news-score">EXPERIMENT</span>
             <span class="news-time">Distributed Neural Sync</span>
             <span class="news-domain">[ GATEWAY ]</span>
           </div>
         </div>
       `;
-      statusEl.innerText = 'CACHE_DISCOVERY';
+      container.dataset.feedState = 'offline-sample';
+      setFeedStatus(statusEl, 'OFFLINE_SAMPLE', 'status-offline');
     }
   }
 
@@ -274,6 +281,9 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       feedTag.addEventListener('click', toggleFeedMode);
     }
     if (!container || !statusEl) return true;
+
+    container.dataset.feedState = 'loading';
+    setFeedStatus(statusEl, 'FETCHING', 'status-loading');
 
     if (feedMode === 'business') {
       renderBusinessFeed();
@@ -318,24 +328,26 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       let filteredStories = rawStories.filter(isStoryRelevant);
 
       // If fewer than 4 relevant stories, top-up with curated cybernetic intelligence
+      let usedSampleStories = false;
       if (filteredStories.length < 4) {
         for (const poolItem of curatedCyberPool) {
           if (!filteredStories.some(s => s.title === poolItem.title)) {
-            filteredStories.push(poolItem);
+            filteredStories.push({ ...poolItem, sample: true });
+            usedSampleStories = true;
           }
           if (filteredStories.length >= 5) break;
         }
       }
 
       filteredStories = filteredStories.slice(0, 4);
-      
+
       // Cache successful fetch
       saveNewsCache(filteredStories);
       if (s) s.newsOfflineSince = 0; // Reset offline timer
 
-      renderNewsStories(container, statusEl, filteredStories, 'LIVE_SYNC');
-      reactToNews(filteredStories);
+      renderNewsStories(container, statusEl, filteredStories, usedSampleStories ? 'LIVE+SAMPLE' : 'LIVE_SYNC');
       lastNewsStories = filteredStories;
+      if (window.AMADEUS.net) window.AMADEUS.net.reportNetSuccess();
       return true;
     } catch (err) {
       console.warn("AMADEUS News Sync: API offline, loading curated cyber intelligence pool.", err);
@@ -349,14 +361,22 @@ window.AMADEUS = window.AMADEUS || ({} as any);
         renderFallbackNews(container, statusEl);
         if (s && s.newsOfflineSince === 0) s.newsOfflineSince = Date.now();
       }
+      if (window.AMADEUS.net) window.AMADEUS.net.reportNetFailure();
       return false;
     }
   }
 
   function renderNewsStories(container, statusEl, stories, statusText) {
     container.innerHTML = '';
-    statusEl.innerText = statusText;
-    statusEl.className = 'pulse-text';
+    const state = statusText === 'LIVE_SYNC'
+      ? 'status-live'
+      : statusText === 'LIVE+SAMPLE'
+        ? 'status-busy'
+        : statusText === 'CACHED'
+          ? 'status-cached'
+          : 'status-offline';
+    container.dataset.feedState = state.replace('status-', '');
+    setFeedStatus(statusEl, statusText, state);
 
     stories.forEach(story => {
       const item = document.createElement('a');
@@ -380,8 +400,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       const tag = story.tag || getCleanDomainTag(story.url, story.title);
       const esc = window.AMADEUS.escapeHtml;
       metaDiv.innerHTML = `
-        <span class="news-score">▲ ${story.score || 0} pts</span>
-        <span class="news-time">posted ${timeSince(story.time || (Date.now()/1000 - 1800))} ago</span>
+        <span class="news-score">${story.sample ? 'SAMPLE' : `▲ ${story.score || 0} pts`}</span>
+        <span class="news-time">${story.sample ? 'curated fallback' : `posted ${timeSince(story.time || (Date.now()/1000 - 1800))} ago`}</span>
         <span class="news-domain">[ ${esc(tag)} ]</span>
       `;
 
@@ -393,8 +413,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
 
   function renderFallbackNews(container, statusEl) {
     container.innerHTML = '';
-    statusEl.innerText = 'WORLD_LINE_SYNC';
-    statusEl.className = 'pulse-text';
+    container.dataset.feedState = 'offline-sample';
+    setFeedStatus(statusEl, 'OFFLINE_SAMPLE', 'status-offline');
 
     curatedCyberPool.forEach(story => {
       const item = document.createElement('a');
@@ -411,8 +431,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
 
       const esc = window.AMADEUS.escapeHtml;
       metaDiv.innerHTML = `
-        <span class="news-score">▲ ${story.score} pts</span>
-        <span class="news-time">posted ${timeSince(story.time)} ago</span>
+        <span class="news-score">SAMPLE</span>
+        <span class="news-time">curated fallback</span>
         <span class="news-domain">[ ${esc(story.tag)} ]</span>
       `;
 
@@ -421,7 +441,6 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       container.appendChild(item);
     });
 
-    reactToNews(curatedCyberPool);
     lastNewsStories = curatedCyberPool.slice();
   }
 

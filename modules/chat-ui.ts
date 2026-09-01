@@ -42,9 +42,22 @@ window.AMADEUS = window.AMADEUS || ({} as any);
   function setUplink(state, label) {
     getUiElements();
     if (!chatUplinkEl) return;
-    chatUplinkEl.classList.remove('online', 'offline', 'thinking');
+    chatUplinkEl.classList.remove('online', 'offline', 'thinking', 'status-live', 'status-offline', 'status-busy', 'status-loading');
     if (state) chatUplinkEl.classList.add(state);
+    if (state === 'online') chatUplinkEl.classList.add('status-live');
+    else if (state === 'offline') chatUplinkEl.classList.add('status-offline');
+    else if (state === 'thinking') chatUplinkEl.classList.add('status-busy');
+    else chatUplinkEl.classList.add('status-loading');
     chatUplinkEl.textContent = label;
+  }
+
+  function updateChatBusy(isBusy) {
+    const sendBtn = document.getElementById('chat-send') as HTMLButtonElement | null;
+    if (!sendBtn) return;
+    sendBtn.disabled = isBusy;
+    if (isBusy) sendBtn.setAttribute('aria-busy', 'true');
+    else sendBtn.removeAttribute('aria-busy');
+    sendBtn.textContent = isBusy ? 'WAIT' : 'SEND';
   }
 
   async function checkBrainUplink() {
@@ -71,6 +84,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     const s = window.AMADEUS.state;
     if (s.kurisuReplying) return;
     s.kurisuReplying = true;
+    updateChatBusy(true);
     const msg = userText.trim();
 
     window.AMADEUS.chat.appendChatEntry('user', msg);
@@ -94,6 +108,9 @@ window.AMADEUS = window.AMADEUS || ({} as any);
           source: 'brain',
         };
       } else if (cmd === '/screen' || cmd === '/shot' || cmd === '/inspect') {
+        window.AMADEUS.chat.clearChatPending();
+        s.kurisuReplying = false;
+        updateChatBusy(false);
         window.AMADEUS.chat.triggerScreenCoPilot();
         return;
       } else if (cmd === '/help') {
@@ -114,6 +131,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
         window.AMADEUS.chat.clearChatPending();
         window.AMADEUS.chat.appendChatEntry('assistant', cmdReply.text, cmdReply.source);
         s.kurisuReplying = false;
+        updateChatBusy(false);
         if (l2d) { l2d.isThinking = false; if (l2d.setEmotion) l2d.setEmotion(cmdReply.emotion, 7000); }
         if (window.AMADEUS.bubble) window.AMADEUS.bubble.showKurisuBubble(cmdReply.text, 8000);
         const tts = window.AMADEUS.tts;
@@ -146,6 +164,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       };
     } finally {
       s.kurisuReplying = false;
+      updateChatBusy(false);
     }
 
     s.kurisuHistory.push(
@@ -259,6 +278,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       kurisuSay(msg);
     };
     if (sendBtn) sendBtn.addEventListener('click', send);
+    updateChatBusy(false);
 
     window.addEventListener('keydown', (e) => {
       const s = window.AMADEUS.state;

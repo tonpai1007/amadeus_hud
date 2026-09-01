@@ -60,6 +60,27 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     "Music in the lab always keeps the entropy low.",
   ];
 
+  const KURISU_TASK_PROUD_LINES = [
+    "The task board is nearly clear. You're on an efficiency high today.",
+    "Almost everything checked off. Even my simulations didn't predict this pace.",
+    "The lab log is clean. Take a second to appreciate it.",
+  ];
+
+  const KURISU_TASK_NAG_LINES = [
+    "Your task backlog is crying, you know. I can hear it from here.",
+    "Four-plus open items on the board. Statistically, one of them takes five minutes. Pick it.",
+    "The checklist keeps staring at me. Deal with it before it mutates.",
+  ];
+
+  // Gloomy-weather + low-mood tone: melancholy coaxing instead of the usual
+  // neutral chatter. Gated in scheduleIdleChatter by weather + mood checks.
+  const KURISU_GLOOMY_LINES = [
+    "Rain again. The lab always feels smaller on days like this.",
+    "Grey skies, grey mood. Don't let the weather pick your world line for you.",
+    "Storms outside, storms inside. At least the desk lamp is warm.",
+    "Weather like this makes productivity a rumor. Do one small thing anyway.",
+  ];
+
   function initKurisuBubble() {
     kurisuBubbleEl = document.getElementById('kurisu-bubble');
     if (!kurisuBubbleEl) return;
@@ -95,7 +116,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       kurisuBubbleTextEl.classList.remove('bubble-thinking');
       kurisuBubbleTextEl.textContent = '';
     }
-    if (kurisuBubbleCaretEl) kurisuBubbleCaretEl.classList.remove('hidden');
+    // Speech bubbles are annotations, not editable fields; no caret is shown.
     let i = 0;
     kurisuTypingTimer = setInterval(() => {
       i += 1;
@@ -183,9 +204,21 @@ window.AMADEUS = window.AMADEUS || ({} as any);
           if (w && w.isRaining) candidatePools.push(KURISU_WEATHER_RAIN_LINES);
           if (w && w.isSunny) candidatePools.push(KURISU_WEATHER_SUN_LINES);
           if (isMusic) candidatePools.push(KURISU_MUSIC_LINES);
+          const tk = window.AMADEUS.taskWidget && window.AMADEUS.taskWidget.getTasks ? window.AMADEUS.taskWidget.getTasks() : null;
+          if (Array.isArray(tk) && tk.length > 0) {
+            const doneCount = tk.filter((t) => t.completed).length;
+            if (doneCount / tk.length >= 0.8) candidatePools.push(KURISU_TASK_PROUD_LINES);
+            else if (tk.length - doneCount >= 4) candidatePools.push(KURISU_TASK_NAG_LINES);
+          }
+          // Gloomy weather + cold mood gets its own melancholy tone
+          const gloomy = w && (w.isRaining || w.isThunder || w.isSnow || w.isCloudy) && s.mood < 45;
+          if (gloomy) candidatePools.push(KURISU_GLOOMY_LINES);
 
           const chosenPool = candidatePools[Math.floor(Math.random() * candidatePools.length)];
-          text = chosenPool[Math.floor(Math.random() * chosenPool.length)];
+          // Avoid repeating lines across restarts when the shared dedup helper exists
+          text = window.AMADEUS.pickFreshLine
+            ? window.AMADEUS.pickFreshLine('idle', chosenPool)
+            : chosenPool[Math.floor(Math.random() * chosenPool.length)];
           emotion = s.mood >= 65 ? 'happy' : (isMusic ? 'excited' : 'thinking');
                 }
         if (canSpeak()) {

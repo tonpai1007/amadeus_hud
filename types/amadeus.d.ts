@@ -71,6 +71,7 @@ declare namespace AMADEUS {
       newsReactions: boolean;
       musicMood: boolean;
       postureFatigue: boolean;
+      focusMode: boolean;
     };
   }
 
@@ -174,7 +175,8 @@ declare namespace AMADEUS {
 
   let divergence: {
     initDivergence(): void;
-    triggerWorldlineShift(): void;
+    triggerWorldlineShift(customTarget?: number): void;
+    applyTaskNudge(progress: number): void;
     updateDivergence(now: number): void;
     getDivergence(): string;
     renderDivergence(now: number): void;
@@ -283,6 +285,7 @@ declare namespace AMADEUS {
     applyTheme(theme?: string): void;
     resetPanelPositions(): void;
     toggleCinematicMode(): void;
+    closeSettingsDrawer(): boolean;
     petApply: any;
     voice?: boolean;
   };
@@ -295,6 +298,29 @@ declare namespace AMADEUS {
     autoOrganizeVault(): void;
     getTasks(): any;
   };
+
+  let focus: {
+    initFocus(): void;
+    start(): boolean;
+    cancel(silent?: boolean): boolean;
+    setFeatureEnabled(on: boolean): void;
+    isActive(): boolean;
+    getPhase(): 'idle' | 'focus' | 'break';
+    getTodayCount(): number;
+    getStreak(): number;
+    _tick(): void;
+  };
+
+  let net: {
+    reportNetSuccess(): void;
+    reportNetFailure(): void;
+    setSource(name: string, online: boolean, opts?: { immediate?: boolean; detail?: string }): void;
+    isNetOnline(): boolean;
+  };
+
+  function safeSetItem(key: string, value: string): boolean;
+
+  function pickFreshLine(key: string, pool: string[]): string;
 
   let mediaPlayer: {
     initMediaPlayer(): void;

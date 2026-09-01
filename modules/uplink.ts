@@ -99,22 +99,25 @@ window.AMADEUS = window.AMADEUS || ({} as any);
   }
 
   function updateUplinkStatus(online) {
-    const uplinkEl = document.getElementById('hud-uplink');
     const kernelEl = document.getElementById('hud-kernel');
     const s = window.AMADEUS.state;
-    
-    if (uplinkEl) {
+
+    if (s) {
+      if (online) s.uplinkOfflineSince = 0;
+      else if (!s.uplinkOfflineSince) s.uplinkOfflineSince = Date.now();
+    }
+
+    // The #hud-uplink line is owned by the shared net indicator (state.ts) so
+    // web + brain outages aggregate into one LIVE_FEED / DEGRADED / OFFLINE
+    // readout; here we only report this source's state and keep the kernel tag.
+    if (window.AMADEUS.net && window.AMADEUS.net.setSource) {
       if (online) {
-        setStatusText(uplinkEl, 'UPLINK: LIVE_STREAM');
-        uplinkEl.style.color = '#ff4d55';
-        if (s) s.uplinkOfflineSince = 0;
+        window.AMADEUS.net.setSource('brain', true);
       } else {
         const offlineSince = s && s.uplinkOfflineSince ? s.uplinkOfflineSince : Date.now();
-        if (s) s.uplinkOfflineSince = offlineSince;
         const minutes = Math.floor((Date.now() - offlineSince) / 60000);
-        const cacheHint = minutes > 0 ? ` (cached ${minutes}m ago)` : '';
-        setStatusText(uplinkEl, `UPLINK: OFFLINE${cacheHint}`);
-        uplinkEl.style.color = '#888';
+        // WebSocket close/error is a definitive offline event → immediate flip
+        window.AMADEUS.net.setSource('brain', false, { immediate: true, detail: minutes > 0 ? `cached ${minutes}m ago` : '' });
       }
     }
     if (kernelEl) {
@@ -143,7 +146,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
           if (evData.world_line_divergence) {
             const divEl = document.getElementById('hud-divergence');
             if (divEl) {
-              divEl.style.display = 'block';
+              divEl.hidden = false;
+              divEl.setAttribute('aria-hidden', 'false');
               setStatusText(divEl, `DIV: ${Number(evData.world_line_divergence).toFixed(6)}`);
             }
           }

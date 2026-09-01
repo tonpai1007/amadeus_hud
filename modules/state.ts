@@ -129,7 +129,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       easterEggs: true,
       newsReactions: true,
       musicMood: true,
-      postureFatigue: true,
+      postureFatigue: true, focusMode: true,
     },
   };
 
@@ -212,6 +212,158 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     CHAT_LOG_MAX: 60,
   });
 
+  // ---------------------------------------------------------------------------
+  // Network health indicator. Modules that talk to the internet (weather,
+  // news, brain uplink) report success/failure here; after repeated failures
+  // the clock panel's #hud-uplink alert flips to "UPLINK: OFFLINE" so a dead
+  // connection is visible on the HUD instead of being console-warn only.
+  const NET_FAIL_THRESHOLD = 2;
+  // Per-source connectivity. 'web' = public internet (weather/news fetches),
+  // 'brain' = local AMADEUS brain WebSocket. The HUD line shows OFFLINE only
+  // when every known source is down; a mixed state shows DEGRADED.
+  const _netSources: Record<string, { online: boolean; failures: number; offlineSince: number; detail: string }> = {
+    web: { online: true, failures: 0, offlineSince: 0, detail: '' },
+  };
+
+  function renderUplinkStatus(): void {
+    const el = document.getElementById('hud-uplink');
+    if (!el) return;
+    const names = Object.keys(_netSources);
+    const allOnline = names.every((n) => _netSources[n].online);
+    const allOffline = names.every((n) => !_netSources[n].online);
+    const detail = names.map((n) => _netSources[n].detail).filter(Boolean)[0] || '';
+    // Rebuild the alert line (static string, no user data — safe as innerHTML)
+    // so the decorative bullet span survives the text swap.
+    el.innerHTML = '<span class="bullet" aria-hidden="true"></span> UPLINK: ' +
+      (allOnline ? 'LIVE_FEED' : allOffline ? 'OFFLINE' : 'DEGRADED') +
+      (!allOnline && detail ? ' (' + detail + ')' : '');
+    el.classList.toggle('status-live', allOnline);
+    el.classList.toggle('status-offline', allOffline);
+  }
+
+  function setNetSource(name: string, online: boolean, opts?: { immediate?: boolean; detail?: string }): void {
+    const src = _netSources[name] || (_netSources[name] = { online: true, failures: 0, offlineSince: 0, detail: '' });
+    const immediate = !!(opts && opts.immediate);
+    const detail = opts ? opts.detail : undefined;
+    if (online) {
+      src.failures = 0; src.offlineSince = 0; src.detail = '';
+      if (src.online) return;
+      src.online = true;
+      console.log('[AMADEUS] Net source "' + name + '" restored.');
+      renderUplinkStatus();
+      return;
+    }
+    const wasOnline = src.online;
+    const detailChanged = detail !== undefined && detail !== src.detail;
+    if (detail !== undefined) src.detail = detail;
+    if (wasOnline) src.offlineSince = Date.now();
+    src.failures++;
+    // Definitive offline events (e.g. WebSocket close) flip immediately;
+    // polled web fetches need repeated failures so one hiccup never flickers.
+    const flip = wasOnline && (immediate || src.failures >= NET_FAIL_THRESHOLD);
+    if (flip) {
+      src.online = false;
+      console.warn('[AMADEUS] Net source "' + name + '" offline.');
+    }
+    if (!flip && !detailChanged) return;
+    renderUplinkStatus();
+  }
+
+  function reportNetSuccess(): void { setNetSource('web', true); }
+  function reportNetFailure(): void { setNetSource('web', false); }
+
+  function isNetOnline(): boolean {
+    const names = Object.keys(_netSources);
+    return names.every((n) => _netSources[n].online);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cross-restart line dedup for canned chatter. Keeps a small ring of recently
+  // used lines per key in localStorage so Kurisu doesn't repeat the same quip
+  // across sessions.
+  const SEEN_LINES_KEY = 'amadeus.seenLines';
+  const SEEN_LINES_MAX = 12;
+
+  function pickFreshLine(key: string, pool: string[]): string {
+    if (!Array.isArray(pool) || pool.length === 0) return '';
+    if (pool.length === 1) return pool[0];
+    let seen: string[] = [];
+    try {
+      const raw = localStorage.getItem(SEEN_LINES_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed === 'object' && Array.isArray((parsed as any)[key])) {
+        seen = (parsed as any)[key];
+      }
+    } catch (e) { /* ignore */ }
+    // Prefer unseen lines; only when the whole pool has been seen recently
+    // (ring saturation) fall back to the full pool, but never immediately
+    // repeat the most recent line.
+    const unseen = pool.filter((l) => seen.indexOf(l) === -1);
+    let source = unseen;
+    if (source.length === 0) {
+      const last = seen[seen.length - 1];
+      source = pool.filter((l) => l !== last);
+      if (source.length === 0) source = pool;
+    }
+    const pick = source[Math.floor(Math.random() * source.length)];
+    seen = seen.filter((l) => l !== pick);
+    seen.push(pick);
+    while (seen.length > SEEN_LINES_MAX) seen.shift();
+    try {
+      let blob: Record<string, string[]> = {};
+      const raw2 = localStorage.getItem(SEEN_LINES_KEY);
+      if (raw2) {
+        const p = JSON.parse(raw2);
+        if (p && typeof p === 'object') blob = p;
+      }
+      blob[key] = seen;
+      localStorage.setItem(SEEN_LINES_KEY, JSON.stringify(blob));
+    } catch (e) { /* ignore */ }
+    return pick;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Quota-safe localStorage write. On QuotaExceededError, evicts the oldest
+  // optional cache entries (chat log, chat history, news cache) once and
+  // retries; if it still fails, surfaces a one-time bubble instead of silently
+  // dropping writes forever.
+  const EVICTABLE_STORAGE_KEYS = [
+    'amadeus.chatLog',
+    'amadeus.kurisuHistory',
+    'amadeus.news.cache',
+  ];
+  let _quotaWarned = false;
+
+  function safeSetItem(key: string, value: string): boolean {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (e: any) {
+      const quota = e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || /quota/i.test(String(e.message || '')));
+      if (!quota) return false;
+      console.warn('[AMADEUS] localStorage quota exceeded — trimming old caches once.', e);
+      // Drop the in-memory chat state too so a later pagehide flush doesn't
+      // immediately re-overflow the quota.
+      try {
+        EVICTABLE_STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
+        state.chatLog = state.chatLog.slice(-10);
+        localStorage.setItem(key, value);
+      } catch (e2) {
+        if (!_quotaWarned) {
+          _quotaWarned = true;
+          try {
+            if (window.AMADEUS.bubble && window.AMADEUS.bubble.showKurisuBubble) {
+              window.AMADEUS.bubble.showKurisuBubble('Heads up — local storage is full. I had to trim the older chat records.', 7000, true);
+            }
+          } catch (e3) { /* ignore */ }
+        }
+        return false;
+      }
+      return true;
+    }
+  }
+
+
   /**
    * AMADEUS shared runtime state & platform helpers. Exports:
    * - `state`          mutable runtime state (cursor, audio, mood, chat, sleep flags)
@@ -225,6 +377,16 @@ window.AMADEUS = window.AMADEUS || ({} as any);
    *   requestAnimationFrame source; all visual subsystems subscribe here
    * - `createWsHeartbeat(ws, opts)` — keep-alive pings + staleness close for
    *   WebSocket clients ({intervalMs=25000, staleMs=90000}) → {start, stop, touch}
+   * - `net` — per-source network health: reportNetSuccess()/reportNetFailure()
+   *   track the public web (weather/news), setSource(name, online, {immediate,
+   *   detail}) tracks other sources (e.g. the brain WebSocket). The clock
+   *   panel's #hud-uplink alert shows LIVE_FEED / DEGRADED / OFFLINE;
+   *   isNetOnline() is true only when every known source is online
+   * - `safeSetItem(key, value)` — quota-safe localStorage write; trims old
+   *   caches and retries on QuotaExceededError, warns via bubble once
+   * - `pickFreshLine(key, pool)` — picks a line from a pool while avoiding the
+   *   last ~12 used ones (persisted), so canned chatter never repeats across
+   *   restarts
    */
   window.AMADEUS.state = state;
   window.AMADEUS.PERF = PERF;
@@ -242,4 +404,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
   window.AMADEUS.startMasterTicker = startMasterTicker;
   window.AMADEUS.onMasterTick = onMasterTick;
   window.AMADEUS.offMasterTick = offMasterTick;
+  window.AMADEUS.net = { reportNetSuccess, reportNetFailure, isNetOnline, setSource: setNetSource };
+  window.AMADEUS.safeSetItem = safeSetItem;
+  window.AMADEUS.pickFreshLine = pickFreshLine;
 })();

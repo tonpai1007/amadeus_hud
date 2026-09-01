@@ -33,6 +33,12 @@ Interactive, sound-reactive Live2D wallpaper starring Makise Kurisu (Steins;Gate
 - **Mood-aware canned replies** — the offline fallback pool is bucketed by disposition (warm / neutral / cold), so even without a brain her answers match her persistent mood.
 - **Posture fatigue** — the longer you stay at the desk, the more she sags forward and the more she reaches for a stretch instead of brooding (resets when she dozes off or the desktop idles).
 - **Sleep/wake choreography** — falling asleep is now a slow eyelid close instead of a snap, and waking up gets a gentle stretch motion before the greeting.
+- **Task tracker with reactions** — a holographic obsidian checklist on the desktop; completing a task earns a praise line and a mood lift, task progress shapes idle chatter (proud when nearly clear, nagging when the backlog piles up), and clearing the whole board converges the divergence meter on the Steins Gate world line.
+- **Focus mode** — a Pomodoro-lite session watcher (25-min focus / 5-min break) with a live countdown chip in the clock panel: click the chip to start or cancel, streaks and completed sessions are persisted across restarts, and long streaks earn their own praise lines. Toggle in **SYSTEM_OPTS → Focus mode**.
+- **Offline uplink indicator** — repeated web fetch failures (weather/news) or a dead brain WebSocket flip the clock panel's uplink line to `UPLINK: OFFLINE` (or `DEGRADED` when only one source is down) instead of failing silently; healthy fetches restore it.
+- **Storage safety** — heavy localStorage writers go through a quota-safe helper that trims old chat/news caches and retries on `QuotaExceededError`, with a one-time Kurisu warning if storage is genuinely full.
+- **Crash banner** — unexpected errors and unhandled promise rejections surface as a small auto-dismissing `SYNC ERROR:` banner (rate-limited to once a minute) instead of a silent black wallpaper.
+- **Chatter dedup memory** — canned idle/praise lines keep a small cross-restart ring of recently used lines, so Kurisu doesn't repeat the same quip session after session.
 - **Debug overlay** — `Ctrl+Shift+D` streams the live Live2D parameter values (pupils, blend shapes, easter eggs, body angles) and draws the cheek-poke hit zone over the canvas, so the tuned constants can be verified against the running model (dev-only, no-op without the controller).
 
 ## Install
@@ -102,6 +108,7 @@ npm run watch      # rebuild src/ + dist/ on every .ts/.css save
 | Click her shadow | Startled hop — a distinct reaction from a normal click |
 | Double-click her canvas | Surprise + returns to center stage |
 | Switch away from the desktop | HUD dims, Kurisu relaxes; on return she peeks and greets you |
+| Click the FOCUS chip | Starts a 25-min focus session (click again to cancel); countdown shows in place |
 | `Ctrl+Shift+D` | Toggle the dev-only L2D debug overlay (live parameters + poke hit zone) |
 
 ## Project structure
@@ -129,7 +136,7 @@ npm run watch      # rebuild src/ + dist/ on every .ts/.css save
 - **Idle rendering at 6fps**: idle mode now draws the model at 6fps instead of 10fps (ticker speed 0.2, param updates tied to the same cap), and the per-audio-frame music-energy scan is skipped while idle.
 - **Per-feature runtime gates**: the settings panel's KURISU group toggles idle gestures, ambient motions, easter eggs, news reactions, music mood, and posture fatigue. Disabling a feature drops its runtime work entirely (`live2DController.setFeature`), not just its visual output — a real resource lever on top of the governor.
 - **Reduced-motion respect**: `prefers-reduced-motion` disables the cosmetic body-motion schedulers (ambient Special motions, self-initiated idle gestures, idle chatter); breathing/blinking/sway and the `prefers-reduced-motion` CSS handling still apply.
-- **Storage hygiene**: chat log, chat history, and mood writes are capped and debounced (coalesced) with a pagehide flush, so bursts of activity cause one disk write instead of one per event.
+- **Storage hygiene**: chat log, chat history, and mood writes are capped and debounced (coalesced) with a pagehide flush, so bursts of activity cause one disk write instead of one per event. Heavy writers go through `AMADEUS.safeSetItem`, which evicts old optional caches and retries once on quota errors.
 - `prefers-reduced-motion` is respected for CSS animations.
 
 ## Live2D enhancements

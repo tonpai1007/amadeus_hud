@@ -69,11 +69,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       if (l2d && l2d.setEmotion) l2d.setEmotion('surprised', 2500);
       setTimeout(() => {
         if (s.isSleeping) return;
-        const chat = window.AMADEUS.chat;
-        const wakeLines = (chat && chat.KURISU_WAKE_LINES) || ["Welcome back. The divergence meter kept running without you."];
-        const line = wakeLines[Math.floor(Math.random() * wakeLines.length)];
-        if (window.AMADEUS.bubble) window.AMADEUS.bubble.showKurisuBubble(line, 6000);
-        if (chat) chat.appendChatEntry('assistant', line, 'history');
+        // Wake visually; keep the transcript quiet until the user speaks.
+        if (l2d && l2d.setEmotion) l2d.setEmotion('content', 2500);
       }, 900);
       console.log('AMADEUS HUD: Kurisu woke up.');
     }
@@ -125,11 +122,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     s.lastPeekAt = now;
     const l2d = s.live2DController;
     if (l2d && l2d.triggerPeek) l2d.triggerPeek();
-    const chat = window.AMADEUS.chat;
-    const returnLines = (chat && chat.KURISU_RETURN_LINES) || ["Ah — you're back. I was just checking the world line... and you weren't on it."];
-    const line = returnLines[Math.floor(Math.random() * returnLines.length)];
-    if (window.AMADEUS.bubble) window.AMADEUS.bubble.showKurisuBubble(line, 6000);
-    if (chat) chat.appendChatEntry('assistant', line, 'history');
+    // Focus return restores the scene without injecting an unsolicited message.
   }
 
   function applyPerfLevel() {

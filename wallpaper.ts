@@ -124,6 +124,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       ['AMADEUS.mood', window.AMADEUS && window.AMADEUS.mood],
       ['AMADEUS.uplink', window.AMADEUS && window.AMADEUS.uplink],
       ['AMADEUS.brainClient', window.AMADEUS && window.AMADEUS.brainClient],
+      ['AMADEUS.net', window.AMADEUS && window.AMADEUS.net],
+      ['AMADEUS.focus', window.AMADEUS && window.AMADEUS.focus],
     ];
     const missing = required.filter(([, val]) => !val).map(([name]) => name);
     if (missing.length > 0) {
@@ -131,6 +133,33 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     } else {
       console.log('[AMADEUS] All modules loaded.');
     }
+  }
+
+  // --- CRASH BANNER (global error surface) ---
+  const CRASH_BANNER_REPEAT_MS = 60 * 1000;
+  let _lastCrashBannerAt = 0;
+  let _crashBannerTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showCrashBanner(message?: string) {
+    const now = Date.now();
+    if (now - _lastCrashBannerAt < CRASH_BANNER_REPEAT_MS) return;
+    _lastCrashBannerAt = now;
+    let banner = document.getElementById('amadeus-crash-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'amadeus-crash-banner';
+      banner.setAttribute('role', 'alert');
+      banner.className = 'crash-banner';
+      document.body.appendChild(banner);
+    }
+    // textContent only — error messages are untrusted
+    banner.textContent = 'SYNC ERROR: ' + String(message || 'unknown').split('\n')[0].slice(0, 140);
+    banner.classList.add('visible');
+    if (_crashBannerTimer) clearTimeout(_crashBannerTimer);
+    _crashBannerTimer = setTimeout(() => {
+      if (banner) banner.classList.remove('visible');
+      _crashBannerTimer = null;
+    }, 10000);
   }
 
   // --- DOM BOOTSTRAP ---
@@ -149,6 +178,13 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     // Global safety net: log any unhandled promise rejections from bootstrap modules
     window.addEventListener('unhandledrejection', (event) => {
       console.error('[AMADEUS] Unhandled rejection:', event.reason);
+      showCrashBanner(event && event.reason && (event.reason.message || String(event.reason)));
+    });
+
+    // Global error net: surface hard errors as a small HUD banner instead of
+    // leaving a silent black wallpaper. Rate-limited, auto-dismissing.
+    window.addEventListener('error', (event) => {
+      showCrashBanner(event && (event.message || (event.error && event.error.message)));
     });
 
     const s = window.AMADEUS.state;
@@ -182,7 +218,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     if (tts) safeInit('initTTSAudio', tts.initTTSAudio);
 
     safeInit('initLive2D', () => initLive2D().then(() => {
-      if (chat && chat.kurisuGreetOnLoad) chat.kurisuGreetOnLoad();
+      // Kurisu speaks when the user invokes chat or an interaction, not on boot.
     }));
 
     if (chat) {
@@ -198,7 +234,6 @@ window.AMADEUS = window.AMADEUS || ({} as any);
 
     if (bubble) {
       safeInit('initKurisuBubble', bubble.initKurisuBubble);
-      safeInit('scheduleIdleChatter', bubble.scheduleIdleChatter);
     }
 
     if (news) safeInit('fetchRealtimeNews', news.fetchRealtimeNews);
@@ -221,21 +256,27 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     if (lively) safeInit('initLivelyWebSocket', lively.initLivelyWebSocket);
     if (window.AMADEUS.uplink) safeInit('initCognitiveUplink', window.AMADEUS.uplink.init);
     if (window.AMADEUS.taskWidget) safeInit('initTaskWidget', window.AMADEUS.taskWidget.initTaskWidget);
+    if (window.AMADEUS.focus) safeInit('initFocus', window.AMADEUS.focus.initFocus);
     if (window.AMADEUS.mediaPlayer) safeInit('initMediaPlayer', window.AMADEUS.mediaPlayer.initMediaPlayer);
 
     // Keyboard Shortcuts Matrix Modal (Ctrl+/)
     const keybindOverlay = document.getElementById('keybind-overlay');
     const keybindClose = document.getElementById('keybind-close');
+    let keybindInvoker: HTMLElement | null = null;
     const toggleKeybinds = (show?: boolean) => {
       if (!keybindOverlay) return;
       const isHidden = keybindOverlay.hasAttribute('hidden');
       const next = show !== undefined ? show : isHidden;
       if (next) {
+        const active = document.activeElement;
+        keybindInvoker = active instanceof HTMLElement ? active : null;
         keybindOverlay.removeAttribute('hidden');
         if (window.AMADEUS.sfx) window.AMADEUS.sfx.playBeepSound();
         if (keybindClose) keybindClose.focus();
       } else {
         keybindOverlay.setAttribute('hidden', '');
+        if (keybindInvoker && keybindInvoker.isConnected) keybindInvoker.focus();
+        keybindInvoker = null;
       }
     };
     if (keybindClose) keybindClose.addEventListener('click', () => toggleKeybinds(false));
@@ -255,6 +296,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       } else if (e.key === 'Escape') {
         if (keybindOverlay && !keybindOverlay.hasAttribute('hidden')) {
           toggleKeybinds(false);
+        } else if (settings && (settings as any).closeSettingsDrawer && (settings as any).closeSettingsDrawer()) {
+          // Close the drawer before changing any other stage state.
         } else if (document.body.classList.contains('cinematic-mode') && settings && (settings as any).toggleCinematicMode) {
           (settings as any).toggleCinematicMode(false);
         }
@@ -295,10 +338,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
 
     window.addEventListener('pointerdown', () => {
       if (s.isLivelyPaused) return;
-      if (!s.kurisuHintShown) {
-        s.kurisuHintShown = true;
-        if (bubble) setTimeout(() => bubble.showKurisuBubble('[ type a message - press Enter to talk to me ]', 5000), 700);
-      }
+      if (power) power.markActivity();
     }, { passive: true });
 
     document.addEventListener('visibilitychange', () => {

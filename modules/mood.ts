@@ -61,7 +61,9 @@ declare const window: any;
   function writeMood(): void {
     const s: AMADEUS.State = (window as any).AMADEUS.state;
     try {
-      localStorage.setItem(MOOD_KEY, JSON.stringify({ value: s.mood, at: performance.now() }));
+      const payload = JSON.stringify({ value: s.mood, at: performance.now() });
+      if ((window as any).AMADEUS.safeSetItem) (window as any).AMADEUS.safeSetItem(MOOD_KEY, payload);
+      else localStorage.setItem(MOOD_KEY, payload);
     } catch (e) { /* ignore */ }
   }
 

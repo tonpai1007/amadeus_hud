@@ -116,6 +116,248 @@ test('tts.pickBestWebSpeechVoice falls back gracefully with no voices', () => {
 });
 
 // ---------------------------------------------------------------------------
+// state.js — net indicator + safeSetItem
+// ---------------------------------------------------------------------------
+test('AMADEUS.net flips offline after repeated failures and recovers on success', () => {
+  const { sandbox } = makeSandbox();
+  loadModule(sandbox, MOD('state.js'));
+  const net = sandbox.window.AMADEUS.net;
+  assert.equal(typeof net, 'object');
+  assert.equal(net.isNetOnline(), true);
+  net.reportNetFailure(); // 1st failure: threshold not reached
+  assert.equal(net.isNetOnline(), true);
+  net.reportNetFailure(); // 2nd failure: flips offline
+  assert.equal(net.isNetOnline(), false);
+  net.reportNetSuccess();
+  assert.equal(net.isNetOnline(), true);
+});
+
+test('safeSetItem trims caches and retries on quota error', () => {
+  const { sandbox } = makeSandbox();
+  // Storage that is "full": writes fail with a quota error until the evictable
+  // cache entries are removed (simulating space reclaimed by the trim).
+  const backing = new Map();
+  const quotaErr = Object.assign(new Error('too big'), { name: 'QuotaExceededError' });
+  sandbox.localStorage = {
+    getItem: (k) => (backing.has(k) ? backing.get(k) : null),
+    setItem: (k, v) => {
+      if (backing.has('amadeus.chatLog') && k !== 'amadeus.chatLog') throw quotaErr;
+      backing.set(k, String(v));
+    },
+    removeItem: (k) => backing.delete(k),
+  };
+  loadModule(sandbox, MOD('state.js'));
+  // Seed the evictable cache key — storage is now "full"
+  sandbox.localStorage.setItem('amadeus.chatLog', 'cached-chat-payload');
+  // Write while "full": quota error → evict chatLog → retry succeeds
+  assert.equal(sandbox.window.AMADEUS.safeSetItem('amadeus.settings', '{"v":1}'), true);
+  assert.equal(backing.get('amadeus.settings'), '{"v":1}');
+  assert.equal(backing.has('amadeus.chatLog'), false);
+});
+
+// Controllable clock for vm-context modules. focus.ts (and others) call both
+// Date.now() and `new Date()`, so the fake must be a real constructor whose
+// instances read the current fake time and support setHours/setTime/getTime.
+function makeFakeClock(sandbox, startNow = Date.now()) {
+  let now = startNow;
+  class FakeDate extends Date {
+    constructor(...args) {
+      if (args.length === 0) super(now);
+      else super(...args);
+    }
+    static now() { return now; }
+  }
+  sandbox.Date = FakeDate;
+  return {
+    advance: (ms) => { now += ms; },
+    set: (v) => { now = v; },
+    get: () => now,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// focus.js — Pomodoro state machine
+// ---------------------------------------------------------------------------
+test('focus.start begins a session and _tick advances it to completion', () => {
+  const { sandbox } = makeSandbox();
+  // Modules run inside a vm context with their own intrinsics, so inject a
+  // controllable clock as the sandbox's Date (shadows the context intrinsic).
+  const clock = makeFakeClock(sandbox);
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('focus.js'));
+  const focus = sandbox.window.AMADEUS.focus;
+  assert.equal(focus.getPhase(), 'idle');
+  assert.equal(focus.start(), true);
+  assert.equal(focus.getPhase(), 'focus');
+  assert.equal(focus.isActive(), true);
+  // Ticking while still in session keeps it running
+  focus._tick();
+  assert.equal(focus.getPhase(), 'focus');
+  // Jump the clock past the 25-minute horizon
+  clock.advance(26 * 60 * 1000);
+  focus._tick(); // focus expires → break phase begins
+  assert.equal(focus.getPhase(), 'break');
+  clock.advance(6 * 60 * 1000);
+  focus._tick(); // break expires → idle
+  assert.equal(focus.getPhase(), 'idle');
+  assert.equal(focus.isActive(), false);
+});
+
+test('focus.cancel stops an active session and start respects the feature flag', () => {
+  const { sandbox } = makeSandbox();
+  makeFakeClock(sandbox);
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('focus.js'));
+  const focus = sandbox.window.AMADEUS.focus;
+  focus.start();
+  assert.equal(focus.cancel(), true);
+  assert.equal(focus.getPhase(), 'idle');
+  // Disabled flag: start must refuse
+  focus.setFeatureEnabled(false);
+  assert.equal(focus.start(), false);
+  focus.setFeatureEnabled(true);
+  assert.equal(focus.start(), true);
+});
+
+test('focus history persists completed sessions and exposes today count + streak', () => {
+  const { sandbox, storage } = makeSandbox();
+  const clock = makeFakeClock(sandbox);
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('focus.js'));
+  const focus = sandbox.window.AMADEUS.focus;
+  assert.equal(focus.getTodayCount(), 0);
+  assert.equal(focus.getStreak(), 0);
+
+  // Complete one focus session
+  focus.start();
+  clock.advance(26 * 60 * 1000);
+  focus._tick(); // → break
+  clock.advance(6 * 60 * 1000);
+  focus._tick(); // → idle, session recorded
+  assert.equal(focus.getTodayCount(), 1);
+  assert.equal(focus.getStreak(), 1);
+  assert.equal(JSON.parse(storage.get('amadeus.focus.history')).length, 1);
+
+  // A fresh module instance (simulating a reload) restores the history
+  loadModule(sandbox, MOD('focus.js'));
+  assert.equal(sandbox.window.AMADEUS.focus.getTodayCount(), 1);
+
+  // A session completed yesterday still counts toward the streak even with
+  // nothing done today, but not toward today's count.
+  const yesterday = clock.get() - 24 * 60 * 60 * 1000;
+  storage.set('amadeus.focus.history', JSON.stringify([yesterday]));
+  loadModule(sandbox, MOD('focus.js'));
+  assert.equal(sandbox.window.AMADEUS.focus.getTodayCount(), 0);
+  assert.equal(sandbox.window.AMADEUS.focus.getStreak(), 1);
+
+  // Nothing for days → streak broken
+  storage.set('amadeus.focus.history', JSON.stringify([clock.get() - 3 * 24 * 60 * 60 * 1000]));
+  loadModule(sandbox, MOD('focus.js'));
+  assert.equal(sandbox.window.AMADEUS.focus.getStreak(), 0);
+});
+
+// ---------------------------------------------------------------------------
+// state.js — per-source net indicator + pickFreshLine dedup
+// ---------------------------------------------------------------------------
+test('net.setSource tracks web and brain independently', () => {
+  const { sandbox } = makeSandbox();
+  loadModule(sandbox, MOD('state.js'));
+  const net = sandbox.window.AMADEUS.net;
+  assert.equal(net.isNetOnline(), true);
+
+  // Definitive brain outage (immediate: WebSocket close) takes it down
+  net.setSource('brain', false, { immediate: true });
+  assert.equal(net.isNetOnline(), false);
+  // A healthy web fetch does NOT restore overall status while brain is down
+  net.reportNetSuccess();
+  assert.equal(net.isNetOnline(), false);
+  // Brain back → fully online
+  net.setSource('brain', true);
+  assert.equal(net.isNetOnline(), true);
+
+  // Polled web fetches need repeated failures (threshold 2) to flip
+  net.setSource('web', false);
+  assert.equal(net.isNetOnline(), true);
+  net.setSource('web', false);
+  assert.equal(net.isNetOnline(), false);
+  // One success recovers
+  net.reportNetSuccess();
+  assert.equal(net.isNetOnline(), true);
+});
+
+test('pickFreshLine avoids recently used lines while unseen options remain', () => {
+  const { sandbox, storage } = makeSandbox();
+  loadModule(sandbox, MOD('state.js'));
+  const pick = sandbox.window.AMADEUS.pickFreshLine;
+  const pool = ['alpha', 'beta', 'gamma'];
+  // Seed the seen-ring with 'alpha' → the first pick must avoid it
+  storage.set('amadeus.seenLines', JSON.stringify({ idle: ['alpha'] }));
+  assert.notEqual(pick('idle', pool), 'alpha');
+  // Once the ring saturates (whole pool seen) repeats become unavoidable,
+  // but two consecutive picks must never be the same line
+  let prev = pick('idle', pool);
+  for (let i = 0; i < 60; i++) {
+    const cur = pick('idle', pool);
+    assert.notEqual(cur, prev);
+    prev = cur;
+  }
+  // Mark everything seen → the ring saturates and the pool still yields lines
+  storage.set('amadeus.seenLines', JSON.stringify({ idle: pool }));
+  const picks = new Set();
+  for (let i = 0; i < 30; i++) picks.add(pick('idle', pool));
+  assert.ok(picks.size >= 1);
+  // Degenerate inputs
+  assert.equal(pick('x', []), '');
+  assert.equal(pick('x', ['solo']), 'solo');
+});
+
+// ---------------------------------------------------------------------------
+// divergence.js — task-progress world line nudge
+// ---------------------------------------------------------------------------
+test('divergence.applyTaskNudge bends the target toward the Steins Gate line', () => {
+  const { sandbox } = makeSandbox();
+  loadModule(sandbox, MOD('state.js'));
+  sandbox.performance = { now: () => 1e12 };
+  loadModule(sandbox, MOD('divergence.js'));
+  const div = sandbox.window.AMADEUS.divergence;
+  const NOW = 1e12 + 20000; // past the initial mood-sync + jitter horizons
+
+  // One tick lets the mood baseline pull the target off 1.048596
+  div.updateDivergence(NOW);
+  let settled = 0;
+  for (let i = 0; i < 300; i++) {
+    div.updateDivergence(NOW);
+    settled = div.getDivergence();
+  }
+
+  // Full progress nudge → the meter drifts upward toward 1.048596
+  div.applyTaskNudge(1);
+  for (let i = 0; i < 300; i++) div.updateDivergence(NOW);
+  assert.ok(div.getDivergence() > settled,
+    `expected divergence above ${settled}, got ${div.getDivergence()}`);
+
+  // Degenerate inputs are clamped/no-ops (must not throw or crash)
+  div.applyTaskNudge(0);
+  div.applyTaskNudge(-5);
+  div.applyTaskNudge(999);
+  div.applyTaskNudge('not-a-number');
+});
+
+// ---------------------------------------------------------------------------
+// task-widget.js — praise pool wiring (bubble chatter consumes getTasks)
+// ---------------------------------------------------------------------------
+test('task-widget exposes getTasks for bubble chatter and widget init', () => {
+  const { sandbox } = makeSandbox();
+  loadModule(sandbox, MOD('bubble.js'));
+  loadModule(sandbox, MOD('task-widget.js'));
+  assert.equal(typeof sandbox.window.AMADEUS.taskWidget.getTasks, 'function');
+  // Task list starts empty in the sandbox (no init fetch); the contract is
+  // that it is always an array so bubble.ts chatter can safely consume it.
+  assert.ok(Array.isArray(sandbox.window.AMADEUS.taskWidget.getTasks()));
+});
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // oscilloscope.js — hexToRgb
 // ---------------------------------------------------------------------------
 test('oscilloscope.hexToRgb parses hex colors and rejects malformed input', () => {
@@ -948,4 +1190,69 @@ test('bubble.shouldSuppressCannedIdle silences canned chatter when no AI is conf
   // AI configured + canned fallback → allow (AI is present, so canned backup is valid)
   assert.equal(shouldSuppressCannedIdle(false, true), false,
     'canned fallback should be allowed when an AI tier is configured');
+});
+// ---------------------------------------------------------------------------
+// settings.js � theme completeness: every valid theme must have a scope
+// preset so the oscilloscope colors never fall back to defaults silently.
+// ---------------------------------------------------------------------------
+test('settings: all valid themes have scope presets', () => {
+  const { sandbox } = makeSandbox({ AMADEUS: {} });
+  sandbox.window.AMADEUS.SETTINGS_DEFAULTS = { scope: { ch1: '#000000', ch2: '#000000' } };
+  loadModule(sandbox, MOD('settings.js'));
+  const settings = sandbox.window.AMADEUS.settings;
+
+  const expected = {
+    skuld:   { ch1: '#ff4d55', ch2: '#ff55aa' },
+    amber:   { ch1: '#ffaa40', ch2: '#ffc266' },
+    sg0:     { ch1: '#98a6b8', ch2: '#bfa0c4' },
+    amadeus: { ch1: '#00e5ff', ch2: '#7c4dff' },
+  };
+  const missing = [];
+  for (const [theme, preset] of Object.entries(expected)) {
+    settings.applyTheme(theme, true);
+    const scope = settings.getSettings().scope;
+    if (JSON.stringify(scope) !== JSON.stringify(preset)) {
+      missing.push(theme + ' (got ' + JSON.stringify(scope) + ')');
+    }
+  }
+  assert.deepEqual(missing, [], `missing or wrong scope presets: ${missing.join(', ')}`);
+});
+// ---------------------------------------------------------------------------
+// build: dist/index.html must not leak secret script paths after stripping.
+// ---------------------------------------------------------------------------
+test('build: dist/index.html does not reference secret key files', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'dist', 'index.html'), 'utf8');
+  const secrets = ['brain-key.js', 'openrouter-key.js'];
+  const leaks = [];
+  for (const s of secrets) {
+    if (html.includes(s)) leaks.push(s);
+  }
+  assert.deepEqual(leaks, [], `secret file references leaked into dist/index.html: ${leaks.join(', ')}`);
+});
+
+// ---------------------------------------------------------------------------
+// build: dist/ structure must contain minified modules, vendor dirs, and
+// static assets after a successful build.
+// ---------------------------------------------------------------------------
+test('build: dist/ contains expected minified output and assets', () => {
+  const distRoot = path.join(ROOT, 'dist');
+  assert.ok(fs.existsSync(distRoot), 'dist/ should exist after build');
+
+  const requiredJs = ['wallpaper.js', 'live2d_controller.js'];
+  for (const f of requiredJs) {
+    assert.ok(fs.existsSync(path.join(distRoot, f)), `dist/${f} should exist`);
+    assert.ok(fs.existsSync(path.join(distRoot, f + '.map')), `dist/${f}.map should exist`);
+  }
+
+  for (const d of ['lib', 'live2d', 'sounds']) {
+    assert.ok(fs.existsSync(path.join(distRoot, d)), `dist/${d}/ should exist`);
+  }
+
+  for (const f of ['LivelyInfo.json', 'LivelyProperties.json', 'thumbnail.png', 'style.css', 'style.css.map', 'index.html']) {
+    assert.ok(fs.existsSync(path.join(distRoot, f)), `dist/${f} should exist`);
+  }
+
+  assert.ok(fs.existsSync(path.join(distRoot, 'modules')), 'dist/modules/ should exist');
+  const modFiles = fs.readdirSync(path.join(distRoot, 'modules')).filter(f => f.endsWith('.js'));
+  assert.ok(modFiles.length >= 20, `expected >=20 minified modules, got ${modFiles.length}`);
 });

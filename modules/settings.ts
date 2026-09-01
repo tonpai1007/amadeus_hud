@@ -7,6 +7,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
   const PET_POS_KEY = 'amadeus.petPos';
   let petApply = null;
   let pendingPetMode = null;
+  let settingsDrawerOpen = false;
+  let closeSettingsDrawer = null;
   let SETTINGS = window.AMADEUS.SETTINGS_DEFAULTS
     ? JSON.parse(JSON.stringify(window.AMADEUS.SETTINGS_DEFAULTS))
     : {};
@@ -96,7 +98,10 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     const updateUI = () => {
       const on = canvas && canvas.classList.contains('interact-mode');
       document.body.classList.toggle('interact-mode', on);
-      if (toggle) toggle.classList.toggle('active', on);
+      if (toggle) {
+        toggle.classList.toggle('active', on);
+        toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
       if (stateEl) stateEl.innerText = on ? 'ON' : 'OFF';
     };
 
@@ -129,7 +134,10 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     const updateUI = () => {
       const on = !!(s.live2DController && s.live2DController._petMode);
       document.body.classList.toggle('pet-mode', on);
-      if (toggle) toggle.classList.toggle('active', on);
+      if (toggle) {
+        toggle.classList.toggle('active', on);
+        toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
       if (stateEl) stateEl.innerText = on ? 'ON' : 'OFF';
     };
 
@@ -191,23 +199,41 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     window.AMADEUS.SETTINGS = SETTINGS;
     if (window.AMADEUS.sfx) window.AMADEUS.sfx.setSfxEnabled(SETTINGS.sfx !== false);
 
-    const toggleBody = () => {
-      const body = document.getElementById('settings-body');
-      const state = document.getElementById('settings-state');
-      if (!body) return;
-      const open = body.style.display !== 'none';
-      body.style.display = open ? 'none' : 'block';
-      if (state) state.innerText = open ? 'EXPAND' : 'COLLAPSE';
-      if (window.AMADEUS.sfx) window.AMADEUS.sfx.playBeepSound();
-    };
-
     const header = document.getElementById('settings-toggle');
     const panel = document.getElementById('settings-panel');
+    const body = document.getElementById('settings-body');
+    const state = document.getElementById('settings-state');
+
+    const updateSettingsDrawerUi = (open: boolean) => {
+      settingsDrawerOpen = open;
+      if (panel) panel.classList.toggle('is-open', open);
+      if (body) {
+        body.hidden = !open;
+        body.setAttribute('aria-hidden', open ? 'false' : 'true');
+      }
+      if (header) {
+        header.setAttribute('aria-expanded', open ? 'true' : 'false');
+        header.setAttribute('aria-label', open ? 'Close system options' : 'Open system options');
+      }
+      if (state) state.innerText = open ? 'CLOSE' : 'OPEN';
+    };
+
+    const toggleBody = () => {
+      updateSettingsDrawerUi(!settingsDrawerOpen);
+      if (window.AMADEUS.sfx) window.AMADEUS.sfx.playBeepSound();
+    };
+    closeSettingsDrawer = () => {
+      if (!settingsDrawerOpen) return false;
+      updateSettingsDrawerUi(false);
+      return true;
+    };
+
     if (panel) panel.addEventListener('pointerdown', (e) => e.stopPropagation());
     if (header) {
       header.addEventListener('pointerdown', (e) => e.stopPropagation());
       header.addEventListener('click', toggleBody);
     }
+    updateSettingsDrawerUi(false);
 
     document.querySelectorAll<HTMLInputElement>('#settings-body input').forEach((input) => {
       input.addEventListener('change', () => {
@@ -257,6 +283,9 @@ window.AMADEUS = window.AMADEUS || ({} as any);
         const l2d = window.AMADEUS.state && window.AMADEUS.state.live2DController;
         if (l2d && l2d.setFeature) {
           l2d.setFeature(name, input.checked);
+        }
+        if (name === 'focusMode' && window.AMADEUS.focus && window.AMADEUS.focus.setFeatureEnabled) {
+          window.AMADEUS.focus.setFeatureEnabled(input.checked);
         }
       });
     });
@@ -311,6 +340,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     if (cinematicExitBtn) {
       cinematicExitBtn.addEventListener('click', () => toggleCinematicMode(false));
     }
+    updateCinematicUi(document.body.classList.contains('cinematic-mode'));
 
     // Reset Panel Positions Button
     const resetPosBtn = document.getElementById('btn-reset-positions');
@@ -357,7 +387,12 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     const panels = document.querySelectorAll('.hud-panel');
     panels.forEach((panelEl) => {
       const panel = panelEl as HTMLElement;
-      const panelId = panel.id || panel.className.split(' ')[1] || '';
+      const panelId = panel.id
+        || (panel.classList.contains('top-left-panel') ? 'top-left-panel' : '')
+        || (panel.classList.contains('top-right-panel') ? 'top-right-panel' : '')
+        || (panel.classList.contains('bottom-left-panel') ? 'bottom-left-panel' : '')
+        || panel.className.split(' ')[1]
+        || '';
       if (!panelId) return;
 
       // Restore persisted positions
@@ -445,8 +480,28 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     });
   }
 
+  function updateCinematicUi(isCinematic: boolean) {
+    const enterBtn = document.getElementById('btn-cinematic-toggle') as HTMLButtonElement | null;
+    const exitBtn = document.getElementById('cinematic-exit-btn') as HTMLButtonElement | null;
+    const stateEl = document.getElementById('cinematic-state');
+
+    document.body.classList.toggle('cinematic-mode', isCinematic);
+    if (enterBtn) {
+      enterBtn.hidden = isCinematic;
+      enterBtn.setAttribute('aria-pressed', isCinematic ? 'true' : 'false');
+    }
+    if (exitBtn) {
+      exitBtn.hidden = !isCinematic;
+      exitBtn.setAttribute('aria-pressed', isCinematic ? 'true' : 'false');
+    }
+    if (stateEl) stateEl.textContent = isCinematic ? 'ACTIVE' : 'STANDBY';
+  }
+
   function toggleCinematicMode(force?: boolean): boolean {
-    const isCinematic = document.body.classList.toggle('cinematic-mode', force);
+    const isCinematic = typeof force === 'boolean'
+      ? force
+      : !document.body.classList.contains('cinematic-mode');
+    updateCinematicUi(isCinematic);
     if (window.AMADEUS.sfx) {
       if (isCinematic) window.AMADEUS.sfx.playBeepSound();
       else window.AMADEUS.sfx.playClickSound();
@@ -476,6 +531,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     applyTheme,
     resetPanelPositions,
     toggleCinematicMode,
+    closeSettingsDrawer: () => closeSettingsDrawer ? closeSettingsDrawer() : false,
     pushFeaturesToController,
     petApply: (on) => { if (petApply) petApply(on); else pendingPetMode = on; },
     getSettings: () => SETTINGS,

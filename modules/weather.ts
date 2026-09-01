@@ -48,8 +48,10 @@ declare const window: any;
       };
 
       console.log(`[Weather] Synced: ${desc}, ${tempC}°C (Humidity: ${humidity}%)`);
+      if ((window as any).AMADEUS.net) (window as any).AMADEUS.net.reportNetSuccess();
     } catch (err) {
       console.warn('[Weather] Ambient weather fetch skipped:', err.message);
+      if ((window as any).AMADEUS.net) (window as any).AMADEUS.net.reportNetFailure();
       // Sensible default
       if (!(window as any).AMADEUS.state.weather) {
         (window as any).AMADEUS.state.weather = {
