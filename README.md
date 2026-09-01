@@ -135,7 +135,7 @@ npm run watch      # rebuild src/ + dist/ on every .ts/.css save
 - **Render-rate-capped parameter pipeline**: the Live2D parameter subsystems no longer run at rAF's 60fps — they're gated to exactly the Pixi draw rate (30fps active / 6fps idle, lower still under the perf governor), halving idle CPU with no visual change since the model was already drawn at that rate.
 - **Idle rendering at 6fps**: idle mode now draws the model at 6fps instead of 10fps (ticker speed 0.2, param updates tied to the same cap), and the per-audio-frame music-energy scan is skipped while idle.
 - **Per-feature runtime gates**: the settings panel's KURISU group toggles idle gestures, ambient motions, easter eggs, news reactions, music mood, and posture fatigue. Disabling a feature drops its runtime work entirely (`live2DController.setFeature`), not just its visual output — a real resource lever on top of the governor.
-- **Reduced-motion respect**: `prefers-reduced-motion` disables the cosmetic body-motion schedulers (ambient Special motions, self-initiated idle gestures, idle chatter); breathing/blinking/sway and the `prefers-reduced-motion` CSS handling still apply.
+- **Reduced-motion respect**: `prefers-reduced-motion` disables the cosmetic body-motion schedulers (ambient Special motions, self-initiated idle gestures); breathing/blinking/sway and the `prefers-reduced-motion` CSS handling still apply.
 - **Storage hygiene**: chat log, chat history, and mood writes are capped and debounced (coalesced) with a pagehide flush, so bursts of activity cause one disk write instead of one per event. Heavy writers go through `AMADEUS.safeSetItem`, which evicts old optional caches and retries once on quota errors.
 - `prefers-reduced-motion` is respected for CSS animations.
 
@@ -160,7 +160,7 @@ npm run watch      # rebuild src/ + dist/ on every .ts/.css save
 - **Interactive pet animations**: dragging Kurisu triggers surprise reactions; repeated petting makes her progressively happier.
 - **Persistent mood**: `setMood(0–100)` tints the ambient smile-vs-neutral choice, the stage light hue (rose for warm, cool blue for cold), and the HUD chrome; wallpaper.js persists and drifts it, and feeds it back from every interaction (`onMood`).
 - **Time-of-day awareness**: the night flag (19:00–06:00, refreshed ~1/min) slows blink intervals ×1.4, tightens pupil targets ×0.85, dims the stage light, and shortens the idle-before-"tired" fuse.
-- **Sleep/wake choreography**: `setEmotion('sleepy')` eases the eyelids shut over ~1.4s (`_sleepChoreo`), and waking plays a Special-group stretch motion before the greeting line.
+- **Sleep/wake choreography**: `setEmotion('sleepy')` eases the eyelids shut over ~1.4s (`_sleepChoreo`), and waking plays a Special-group stretch motion.
 - **Self-initiated idle gestures**: a scheduler (like the ambient motions) crosses her arms via `HandChange`, glances at the clock, or does a brief stretch — gated on speech, pets, holds, easter eggs, and a 30s-still cursor.
 - **Debug state**: `debugState()` exposes the live emotion/mood/time/pupil/blink/easter-egg state plus raw smoothed parameter values and the cheek-poke zone in canvas pixels, consumed by the Ctrl+Shift+D overlay.
 - **Performance-aware animations**: animation speed and physics intensity scale with the performance governor.
