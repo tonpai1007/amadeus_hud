@@ -122,11 +122,13 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     bubbleSafe("Twenty-five minutes of focus. Impressive. Break time — five minutes, doctor's orders.", 7000);
     if (window.AMADEUS.mood && window.AMADEUS.mood.adjustMood) window.AMADEUS.mood.adjustMood(2);
     renderChip();
+    updateChipTitle();
   }
 
   function endBreak(): void {
     phase = 'idle';
     renderChip();
+    updateChipTitle();
     stopTicker();
     bubbleSafe("Break's over. Ready for another round whenever you are.", 6000);
   }
@@ -140,6 +142,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     if (!silent && was === 'focus') {
       bubbleSafe('Focus session cancelled. No penalty — the timeline just shifts a little.', 6000);
     }
+    updateChipTitle();
     return true;
   }
 
@@ -162,6 +165,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     bubbleSafe(opener, 6000);
     startTicker();
     renderChip();
+    updateChipTitle();
     return true;
   }
 
@@ -189,6 +193,17 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     const f = window.AMADEUS.SETTINGS && window.AMADEUS.SETTINGS.features;
     featureEnabled = !f || f.focusMode !== false;
     renderChip();
+    updateChipTitle();
+  }
+
+  // Hover tooltip: sessions-today + day streak + current action. Called on
+  // phase changes only (never per-second from the tick loop).
+  function updateChipTitle(): void {
+    const chip = document.getElementById('hud-focus');
+    if (!chip) return;
+    chip.title = 'Focus sessions today: ' + getTodayCount() +
+      ' · Day streak: ' + getStreak() +
+      ' (click to ' + (phase === 'idle' ? 'start' : 'cancel') + ')';
   }
 
   function setFeatureEnabled(on: boolean): void {

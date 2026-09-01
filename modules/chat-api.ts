@@ -189,6 +189,21 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     else parts.push('the desk is quiet right now');
     if (emotion && emotion !== 'neutral') parts.push(`you currently feel ${emotion}`);
 
+    // Focus-mode awareness: the brain should know when the user is mid-session
+    // so replies stay brief and low-distraction, and can acknowledge streaks.
+    const focus = window.AMADEUS.focus;
+    if (focus && focus.getPhase) {
+      const ph = focus.getPhase();
+      if (ph === 'focus') {
+        const n = focus.getTodayCount ? focus.getTodayCount() : 0;
+        const streak = focus.getStreak ? focus.getStreak() : 0;
+        const streakTxt = streak > 1 ? `, a ${streak}-day streak` : '';
+        parts.push(`the user is running a 25-minute focus session right now (${n} completed today${streakTxt}) — keep replies short and avoid suggesting distractions`);
+      } else if (ph === 'break') {
+        parts.push('the user is on a short 5-minute focus break — light small talk is fine, but it ends soon');
+      }
+    }
+
     const news = window.AMADEUS.news;
     const stories = news && news.getLastStories ? news.getLastStories() : [];
     if (stories[0] && stories[0].title) {
