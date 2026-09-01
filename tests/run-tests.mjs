@@ -1256,3 +1256,219 @@ test('build: dist/ contains expected minified output and assets', () => {
   const modFiles = fs.readdirSync(path.join(distRoot, 'modules')).filter(f => f.endsWith('.js'));
   assert.ok(modFiles.length >= 20, `expected >=20 minified modules, got ${modFiles.length}`);
 });
+
+// ---------------------------------------------------------------------------
+// settings.js — updateSettingsDrawerUi ARIA state synchronization
+// ---------------------------------------------------------------------------
+function makeTrackingElement() {
+  const el = {
+    style: {},
+    dataset: {},
+    classList: {
+      _classes: new Set(),
+      add(c) { this._classes.add(c); },
+      remove(c) { this._classes.delete(c); },
+      toggle(c, force) {
+        const has = this._classes.has(c);
+        const want = force !== undefined ? force : !has;
+        if (want) this._classes.add(c);
+        else this._classes.delete(c);
+        return want;
+      },
+      contains(c) { return this._classes.has(c); },
+    },
+    _attrs: {},
+    setAttribute(k, v) { this._attrs[k] = v; },
+    removeAttribute(k) { delete this._attrs[k]; },
+    getAttribute(k) { return this._attrs[k] !== undefined ? this._attrs[k] : null; },
+    _hidden: false,
+    set hidden(v) { this._hidden = v; },
+    get hidden() { return this._hidden; },
+    appendChild() {},
+    addEventListener() {},
+    getBoundingClientRect: () => ({ width: 0, height: 0 }),
+  };
+  return el;
+}
+
+test('settings.updateSettingsDrawerUi opens drawer and sets ARIA state', () => {
+  const panel = makeTrackingElement();
+  const body = makeTrackingElement();
+  const handle = makeTrackingElement();
+  const state = makeTrackingElement();
+
+  const { sandbox } = makeSandbox();
+  sandbox.document.getElementById = (id) => {
+    if (id === 'settings-panel') return panel;
+    if (id === 'settings-body') return body;
+    if (id === 'settings-toggle') return handle;
+    if (id === 'settings-state') return state;
+    return null;
+  };
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('settings.js'));
+  const settings = sandbox.window.AMADEUS.settings;
+
+  // Open the drawer
+  settings.updateSettingsDrawerUi(true);
+
+  assert.equal(panel.classList.contains('is-open'), true, 'panel gets is-open class');
+  assert.equal(body.hidden, false, 'body is visible when open');
+  assert.equal(body.getAttribute('aria-hidden'), 'false', 'body aria-hidden is false');
+  assert.equal(handle.getAttribute('aria-expanded'), 'true', 'handle aria-expanded is true');
+  assert.equal(state.textContent, 'COLLAPSE', 'state text shows COLLAPSE when open');
+
+  // Close the drawer
+  settings.updateSettingsDrawerUi(false);
+
+  assert.equal(panel.classList.contains('is-open'), false, 'panel loses is-open class');
+  assert.equal(body.hidden, true, 'body is hidden when closed');
+  assert.equal(body.getAttribute('aria-hidden'), 'true', 'body aria-hidden is true');
+  assert.equal(handle.getAttribute('aria-expanded'), 'false', 'handle aria-expanded is false');
+  assert.equal(state.textContent, 'EXPAND', 'state text shows EXPAND when closed');
+});
+
+test('settings.updateSettingsDrawerUi toggles when no argument given', () => {
+  const panel = makeTrackingElement();
+  const body = makeTrackingElement();
+  const handle = makeTrackingElement();
+  const state = makeTrackingElement();
+
+  const { sandbox } = makeSandbox();
+  sandbox.document.getElementById = (id) => {
+    if (id === 'settings-panel') return panel;
+    if (id === 'settings-body') return body;
+    if (id === 'settings-toggle') return handle;
+    if (id === 'settings-state') return state;
+    return null;
+  };
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('settings.js'));
+  const settings = sandbox.window.AMADEUS.settings;
+
+  // Initially closed → toggle opens
+  settings.updateSettingsDrawerUi();
+  assert.equal(panel.classList.contains('is-open'), true, 'toggle opens from closed');
+
+  // Now open → toggle closes
+  settings.updateSettingsDrawerUi();
+  assert.equal(panel.classList.contains('is-open'), false, 'toggle closes from open');
+});
+
+// ---------------------------------------------------------------------------
+// settings.js — updateCinematicUi synchronizes body class and controls
+// ---------------------------------------------------------------------------
+test('settings.updateCinematicUi enters cinematic mode and toggles controls', () => {
+  const toggleBtn = makeTrackingElement();
+  const exitBtn = makeTrackingElement();
+  const stateEl = makeTrackingElement();
+  const body = makeTrackingElement();
+
+  const { sandbox } = makeSandbox();
+  sandbox.document.getElementById = (id) => {
+    if (id === 'btn-cinematic-toggle') return toggleBtn;
+    if (id === 'cinematic-exit-btn') return exitBtn;
+    if (id === 'cinematic-state') return stateEl;
+    return null;
+  };
+  sandbox.document.body = body;
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('settings.js'));
+  const settings = sandbox.window.AMADEUS.settings;
+
+  // Enter cinematic
+  settings.updateCinematicUi(true);
+
+  assert.equal(body.classList.contains('cinematic-mode'), true, 'body gets cinematic-mode class');
+  assert.equal(toggleBtn.getAttribute('aria-pressed'), 'true', 'toggle aria-pressed is true');
+  assert.equal(toggleBtn.hidden, true, 'enter button hidden in cinematic');
+  assert.equal(exitBtn.hidden, false, 'exit button visible in cinematic');
+  assert.equal(stateEl.textContent, 'CINEMATIC', 'state shows CINEMATIC');
+
+  // Exit cinematic
+  settings.updateCinematicUi(false);
+
+  assert.equal(body.classList.contains('cinematic-mode'), false, 'body loses cinematic-mode class');
+  assert.equal(toggleBtn.getAttribute('aria-pressed'), 'false', 'toggle aria-pressed is false');
+  assert.equal(toggleBtn.hidden, false, 'enter button visible when not cinematic');
+  assert.equal(exitBtn.hidden, true, 'exit button hidden when not cinematic');
+  assert.equal(stateEl.textContent, 'STANDBY', 'state shows STANDBY');
+});
+
+// ---------------------------------------------------------------------------
+// task-widget.js — setParaSyncState state machine
+// ---------------------------------------------------------------------------
+test('task-widget.setParaSyncState cycles idle → syncing → success → idle', () => {
+  const button = makeTrackingElement();
+  const status = makeTrackingElement();
+  status.dataset = {};
+
+  const { sandbox } = makeSandbox();
+  sandbox.document.getElementById = (id) => {
+    if (id === 'para-organize-btn') return button;
+    if (id === 'task-sync-status') return status;
+    return null;
+  };
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('task-widget.js'));
+  const taskWidget = sandbox.window.AMADEUS.taskWidget;
+
+  // Idle state
+  taskWidget.setParaSyncState('idle');
+  assert.equal(button.textContent, 'PARA SYNC', 'idle button text');
+  assert.equal(button.disabled, false, 'button enabled when idle');
+  assert.equal(button.getAttribute('aria-busy'), null, 'no aria-busy when idle');
+  assert.equal(status.dataset.state, 'idle', 'status dataset state is idle');
+  assert.equal(status.textContent, '', 'status text empty when idle');
+
+  // Syncing state
+  taskWidget.setParaSyncState('syncing', 'Organizing 00_Inbox');
+  assert.equal(button.textContent, 'SYNCING...', 'syncing button text');
+  assert.equal(button.disabled, true, 'button disabled while syncing');
+  assert.equal(button.getAttribute('aria-busy'), 'true', 'aria-busy set while syncing');
+  assert.equal(status.dataset.state, 'syncing', 'status dataset state is syncing');
+  assert.equal(status.textContent, 'Organizing 00_Inbox', 'status shows sync message');
+
+  // Success state
+  taskWidget.setParaSyncState('success', 'Moved 5 items');
+  assert.equal(button.textContent, 'PARA SYNC', 'success restores button text');
+  assert.equal(button.disabled, false, 'button re-enabled after success');
+  assert.equal(button.getAttribute('aria-busy'), null, 'aria-busy removed after success');
+  assert.equal(status.dataset.state, 'success', 'status dataset state is success');
+  assert.equal(status.textContent, 'Moved 5 items', 'status shows success message');
+
+  // Error state
+  taskWidget.setParaSyncState('error', 'Sync unavailable');
+  assert.equal(button.textContent, 'RETRY SYNC', 'error button text');
+  assert.equal(button.disabled, false, 'button re-enabled after error');
+  assert.equal(status.dataset.state, 'error', 'status dataset state is error');
+  assert.equal(status.textContent, 'Sync unavailable', 'status shows error message');
+});
+
+test('task-widget.setParaSyncState clears previous timer on new state', () => {
+  const button = makeTrackingElement();
+  const status = makeTrackingElement();
+  status.dataset = {};
+  const timers = [];
+  const cleared = [];
+
+  const { sandbox } = makeSandbox();
+  sandbox.document.getElementById = (id) => {
+    if (id === 'para-organize-btn') return button;
+    if (id === 'task-sync-status') return status;
+    return null;
+  };
+  sandbox.setTimeout = (fn) => { timers.push(fn); return timers.length; };
+  sandbox.clearTimeout = (id) => { cleared.push(id); };
+  loadModule(sandbox, MOD('state.js'));
+  loadModule(sandbox, MOD('task-widget.js'));
+  const taskWidget = sandbox.window.AMADEUS.taskWidget;
+
+  // Set success (starts a timer)
+  taskWidget.setParaSyncState('success', 'Done');
+  assert.ok(timers.length === 1, 'success starts a timer');
+
+  // Set syncing before timer fires (should clear the pending timer)
+  taskWidget.setParaSyncState('syncing', 'Working');
+  assert.ok(cleared.length === 1, 'previous timer is cleared on new state');
+});

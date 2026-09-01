@@ -120,6 +120,7 @@ declare namespace AMADEUS {
   let L2D_CONSTANTS: Record<string, any>;
   let L2D_EMOTION: Record<string, any>;
   let L2D_PHYSICS: Record<string, any>;
+  let L2D_MOTION: Record<string, any>;
   let L2D_INTERACTION: Record<string, any>;
   class Live2DController {
     constructor(...args: any[]);
@@ -285,6 +286,8 @@ declare namespace AMADEUS {
     applyTheme(theme?: string): void;
     resetPanelPositions(): void;
     toggleCinematicMode(): void;
+    updateSettingsDrawerUi(open?: boolean): void;
+    updateCinematicUi(isCinematic: boolean): void;
     closeSettingsDrawer(): boolean;
     petApply: any;
     voice?: boolean;
@@ -296,6 +299,7 @@ declare namespace AMADEUS {
     addNewTask(title?: string): void;
     toggleWidget(id?: string): void;
     autoOrganizeVault(): void;
+    setParaSyncState(state: string, message?: string): void;
     getTasks(): any;
   };
 

@@ -87,6 +87,13 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       targetX *= 0.6; // stabilize gaze
     }
 
+    // Choreography offsets (away pose / peek glance)
+    const cho = ctrl._choreoOff;
+    if (cho) {
+      targetX += cho.headX;
+      targetY += cho.headY;
+    }
+
     // Music bounce: if music is active, add rhythm bounce
     if (ctrl._musicEnergy > 0.15) {
       const beatBob = Math.sin(performance.now() * 0.008) * (ctrl._musicEnergy * 3.5);
@@ -126,6 +133,12 @@ window.AMADEUS = window.AMADEUS || ({} as any);
       targetY = ie.targetY;
     }
 
+    const co = ctrl._choreoOff;
+    if (co) {
+      targetX += co.eyeX;
+      targetY += co.eyeY;
+    }
+
     const lerp = Math.min(1.0, ie.lerpSpeed * dt * 2.5);
     ie.currentX += (targetX - ie.currentX) * lerp;
     ie.currentY += (targetY - ie.currentY) * lerp;
@@ -148,6 +161,44 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     }
     br.currentL += (br.targetL - br.currentL) * br.lerpSpeed * dt;
     br.currentR += (br.targetR - br.currentR) * br.lerpSpeed * dt;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Choreography: away pose + return-peek glance. Produces per-frame offsets
+  // consumed by updateHeadSway / updateIdleEyes; driven from the controller's
+  // procedural tick. Pure offset math — no parameter writes here.
+  function updateChoreo(ctrl, dt, now) {
+    if (!ctrl) return;
+    const off = { headX: 0, headY: 0, eyeX: 0, eyeY: 0 };
+    ctrl._choreoOff = off;
+
+    // Sustained away pose: head drifts down and slightly aside, eyes lower.
+    // Held until the controller clears _awayPose on return.
+    if (ctrl._awayPose) {
+      off.headY -= 6;
+      off.headX += 4;
+      off.eyeY -= 0.25;
+      return;
+    }
+
+    const ch = ctrl._choreo;
+    if (!ch) return;
+    const t = now - ch.start;
+    if (t >= ch.duration) {
+      ctrl._choreo = null;
+      return;
+    }
+    // Peek glance timeline: hold the glance for the first 35%, ease out over
+    // the next 35%, neutral tail. headSway's own lerp smooths the entry.
+    const p = t / ch.duration;
+    let amp;
+    if (p < 0.35) amp = 1;
+    else if (p < 0.7) amp = 1 - (p - 0.35) / 0.35;
+    else amp = 0;
+    const dir = ch.dir || 1;
+    off.headX = dir * 14 * amp;
+    off.eyeX = dir * 0.5 * amp;
+    off.eyeY = -0.1 * amp;
   }
 
   function updateMusicMood(ctrl, dt) {

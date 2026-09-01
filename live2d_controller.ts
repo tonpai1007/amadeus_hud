@@ -250,6 +250,9 @@ class Live2DController {
 
         const phys = window.AMADEUS.L2D_PHYSICS;
         if (phys) {
+            // Choreography first: it publishes ctrl._choreoOff which the
+            // head/eye updaters below consume as per-frame offsets.
+            if (phys.updateChoreo) phys.updateChoreo(this, dt, now);
             phys.updateBlink(this, dt, now);
             phys.updateBreathing(this, dt);
             phys.updateSway(this, dt);
@@ -258,6 +261,10 @@ class Live2DController {
             phys.updateBrows(this, dt, now);
             if (phys.updateMusicMood) phys.updateMusicMood(this, dt);
         }
+
+        // Motion playback scheduler + motion-led flag (params the motion owns)
+        const motion = window.AMADEUS.L2D_MOTION;
+        if (motion && motion.updateMotion) motion.updateMotion(this, dt, now);
 
         const emo = window.AMADEUS.L2D_EMOTION;
         if (emo) {
@@ -275,25 +282,34 @@ class Live2DController {
         const pm = this._isCubism4 ? window.AMADEUS.L2D_CONSTANTS.PARAM_MAP_CUBISM4 : window.AMADEUS.L2D_CONSTANTS.PARAM_MAP_CUBISM2;
         if (!pm) return;
 
+        // Motion-led gate: while a motion3 animation is playing it owns the
+        // pose params (head/body/eyes/breath) — the Cubism runtime applies
+        // motion values AFTER our ticker callback, so our writes on those
+        // params would either be stomped or visibly fight the motion.
+        // Blink and emotion overlays stay procedural (motions don't own them).
+        const motionLed = !!this._motionLed;
+
         // Eyes openness (blinking)
         this.setParameterValue(pm.eyeLOpen, this._blink.value);
         this.setParameterValue(pm.eyeROpen, this._blink.value);
 
-        // Breathing
-        this.setParameterValue(pm.breath, this._breath.value);
+        if (!motionLed) {
+            // Breathing
+            this.setParameterValue(pm.breath, this._breath.value);
 
-        // Sway
-        this.setParameterValue(pm.bodyAngleZ, this._sway.valueZ);
-        this.setParameterValue(pm.bodyAngleX, this._sway.valueX);
+            // Sway
+            this.setParameterValue(pm.bodyAngleZ, this._sway.valueZ);
+            this.setParameterValue(pm.bodyAngleX, this._sway.valueX);
 
-        // Head Angle
-        this.setParameterValue(pm.angleX, this._headSway.valueX * 2);
-        this.setParameterValue(pm.angleY, this._headSway.valueY * 2);
-        this.setParameterValue(pm.angleZ, this._headSway.valueZ * 3);
+            // Head Angle
+            this.setParameterValue(pm.angleX, this._headSway.valueX * 2);
+            this.setParameterValue(pm.angleY, this._headSway.valueY * 2);
+            this.setParameterValue(pm.angleZ, this._headSway.valueZ * 3);
 
-        // Eye Gaze
-        this.setParameterValue(pm.eyeBallX, this._idleEyes.currentX);
-        this.setParameterValue(pm.eyeBallY, this._idleEyes.currentY);
+            // Eye Gaze
+            this.setParameterValue(pm.eyeBallX, this._idleEyes.currentX);
+            this.setParameterValue(pm.eyeBallY, this._idleEyes.currentY);
+        }
 
         // Brows
         this.setParameterValue(pm.browLY, this._brows.currentL);
@@ -406,10 +422,21 @@ class Live2DController {
     }
 
     triggerPeek() {
+        // Return-from-away glance: release the away pose and play a short
+        // glance timeline (offsets consumed by L2D_PHYSICS.updateChoreo).
+        this._awayPose = false;
+        this._choreo = {
+            start: performance.now(),
+            duration: 1600,
+            dir: Math.random() < 0.5 ? -1 : 1,
+        };
         this.setEmotion('surprised', 2000);
     }
 
     onUserAway() {
+        // Sustained away pose: head/eyes drift down and aside until the next
+        // triggerPeek (see updateChoreo in L2D_PHYSICS).
+        this._awayPose = true;
         this.setEmotion('tired');
     }
 

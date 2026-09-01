@@ -229,10 +229,12 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     if (relY < 0.45) {
       // Head / Cheek zone
       playVASound(ctrl, 'flickHead');
+      if (window.AMADEUS.L2D_MOTION) window.AMADEUS.L2D_MOTION.playTapMotion(ctrl, 'head');
       if (ctrl.onMood) ctrl.onMood(-1);
     } else {
       // Body zone
       playVASound(ctrl, 'tapBody');
+      if (window.AMADEUS.L2D_MOTION) window.AMADEUS.L2D_MOTION.playTapMotion(ctrl, 'body');
       if (ctrl.onMood) ctrl.onMood(1);
     }
   }

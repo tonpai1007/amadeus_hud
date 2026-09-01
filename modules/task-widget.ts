@@ -349,6 +349,7 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     addNewTask,
     toggleWidget,
     autoOrganizeVault,
+    setParaSyncState,
     getTasks: () => tasks,
   };
 })();

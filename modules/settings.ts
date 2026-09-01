@@ -194,6 +194,24 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     updateUI();
   }
 
+  function updateSettingsDrawerUi(open?: boolean) {
+    const panel = document.getElementById('settings-panel');
+    const body = document.getElementById('settings-body');
+    const header = document.getElementById('settings-toggle');
+    const state = document.getElementById('settings-state');
+    settingsDrawerOpen = open !== undefined ? open : !settingsDrawerOpen;
+    if (panel) panel.classList.toggle('is-open', settingsDrawerOpen);
+    if (body) {
+      body.hidden = !settingsDrawerOpen;
+      body.setAttribute('aria-hidden', String(!settingsDrawerOpen));
+    }
+    if (header) {
+      header.setAttribute('aria-expanded', String(settingsDrawerOpen));
+      header.setAttribute('aria-label', settingsDrawerOpen ? 'Close system options' : 'Open system options');
+    }
+    if (state) state.textContent = settingsDrawerOpen ? 'COLLAPSE' : 'EXPAND';
+  }
+
   function initSettings() {
     SETTINGS = loadSettings();
     window.AMADEUS.SETTINGS = SETTINGS;
@@ -201,29 +219,16 @@ window.AMADEUS = window.AMADEUS || ({} as any);
 
     const header = document.getElementById('settings-toggle');
     const panel = document.getElementById('settings-panel');
-    const body = document.getElementById('settings-body');
-    const state = document.getElementById('settings-state');
-
-    const updateSettingsDrawerUi = (open: boolean) => {
-      settingsDrawerOpen = open;
-      if (panel) panel.classList.toggle('is-open', open);
-      if (body) {
-        body.hidden = !open;
-        body.setAttribute('aria-hidden', open ? 'false' : 'true');
-      }
-      if (header) {
-        header.setAttribute('aria-expanded', open ? 'true' : 'false');
-        header.setAttribute('aria-label', open ? 'Close system options' : 'Open system options');
-      }
-      if (state) state.innerText = open ? 'CLOSE' : 'OPEN';
-    };
 
     const toggleBody = () => {
-      updateSettingsDrawerUi(!settingsDrawerOpen);
+      const panelEl = document.getElementById('settings-panel');
+      const isOpen = panelEl && panelEl.classList.contains('is-open');
+      updateSettingsDrawerUi(!isOpen);
       if (window.AMADEUS.sfx) window.AMADEUS.sfx.playBeepSound();
     };
     closeSettingsDrawer = () => {
-      if (!settingsDrawerOpen) return false;
+      const panelEl = document.getElementById('settings-panel');
+      if (!panelEl || !panelEl.classList.contains('is-open')) return false;
       updateSettingsDrawerUi(false);
       return true;
     };
@@ -232,6 +237,12 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     if (header) {
       header.addEventListener('pointerdown', (e) => e.stopPropagation());
       header.addEventListener('click', toggleBody);
+      header.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleBody();
+        }
+      });
     }
     updateSettingsDrawerUi(false);
 
@@ -492,9 +503,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     }
     if (exitBtn) {
       exitBtn.hidden = !isCinematic;
-      exitBtn.setAttribute('aria-pressed', isCinematic ? 'true' : 'false');
     }
-    if (stateEl) stateEl.textContent = isCinematic ? 'ACTIVE' : 'STANDBY';
+    if (stateEl) stateEl.textContent = isCinematic ? 'CINEMATIC' : 'STANDBY';
   }
 
   function toggleCinematicMode(force?: boolean): boolean {
@@ -531,6 +541,8 @@ window.AMADEUS = window.AMADEUS || ({} as any);
     applyTheme,
     resetPanelPositions,
     toggleCinematicMode,
+    updateSettingsDrawerUi,
+    updateCinematicUi,
     closeSettingsDrawer: () => closeSettingsDrawer ? closeSettingsDrawer() : false,
     pushFeaturesToController,
     petApply: (on) => { if (petApply) petApply(on); else pendingPetMode = on; },
